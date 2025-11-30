@@ -1,30 +1,26 @@
-// texture.js
 import * as THREE from 'three';
 
-export class TextureManager {
-    constructor() {
-        this.loader = new THREE.TextureLoader();
-        this.texture = this.loadTexture('assets/atlas.png');
-    }
+export class TextureGen {
+    static loadAtlas() { // Переименовали метод в loadAtlas
+        const loader = new THREE.TextureLoader();
 
-    loadTexture(path) {
-        const tex = this.loader.load(path);
+        // Укажите правильный путь к вашему файлу
+        const texture = loader.load(
+            './assets/atlas.png',
+            undefined, // onLoad
+            undefined, // onProgress
+            (error) => {
+                // Исправлено: добавлена обработка ошибок загрузки текстуры
+                console.error('Не удалось загрузить текстуру атласа:', error);
+            }
+        );
 
-        // Улучшенные настройки фильтрации
-        tex.magFilter = THREE.NearestFilter; // Сохраняем пиксельность вблизи
-        tex.minFilter = THREE.LinearMipmapLinearFilter; // Качественный мипмаппинг для дали
+        // Настройки для Pixel Art (чтобы не было мыла)
+        texture.magFilter = THREE.NearestFilter;
+        texture.minFilter = THREE.NearestFilter;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = 0;
 
-        tex.generateMipmaps = true;
-        tex.anisotropy = 4; // Уменьшено для производительности
-
-        // Важные настройки для предотвращения артефактов
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-
-        tex.colorSpace = THREE.SRGBColorSpace;
-
-        return tex;
+        return texture;
     }
 }
-
-export const textureManager = new TextureManager();

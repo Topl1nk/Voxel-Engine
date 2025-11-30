@@ -75,6 +75,27 @@ export const BLOCK_DATA = [
         solid: true, 
         sound: { step: 'grass_step', break: 'grass_break', place: 'grass_place' }
     },
+    { 
+        id: 14, name: 'Cloud', 
+        atlas: [1, 0], 
+        transparent: false, 
+        solid: false, 
+        sound: null
+    },
+    { 
+        id: 15, name: 'Sun', 
+        atlas: [0, 0], 
+        transparent: true, 
+        solid: false, 
+        sound: null
+    },
+    { 
+        id: 16, name: 'Moon', 
+        atlas: [1, 0], 
+        transparent: true, 
+        solid: false, 
+        sound: null
+    },
 ];
 
 export const BLOCKS = {};
@@ -82,5 +103,6 @@ BLOCK_DATA.forEach(b => BLOCKS[b.id] = b);
 
 export const BLOCK = {
     AIR: 0, STONE: 1, DIRT: 2, GRASS: 3, PLANKS: 4,
-    GLASS: 6, LOG: 12, LEAVES: 13
+    GLASS: 6, LOG: 12, LEAVES: 13, BEDROCK: 1, // BEDROCK использует текстуру STONE
+    CLOUD: 14, SUN: 15, MOON: 16
 };

@@ -8,6 +8,12 @@ export class SoundManager {
         this.loader = new THREE.AudioLoader();
         this.buffers = new Map();
 
+        // Настройки громкости
+        this.masterVolume = 1.0;
+        this.soundEffectsVolume = 1.0;
+        this.musicVolume = 0.5;
+        this.enabled = true;
+
         // Список файлов для загрузки (пример)
         // В реальности лучше генерировать это список автоматически или грузить лениво
         this.preloadList = [
@@ -23,18 +29,29 @@ export class SoundManager {
     loadSounds() {
         this.preloadList.forEach(path => {
             const name = path.split('/').pop().replace('.mp3', ''); // 'stone_step'
-            this.loader.load(path, (buffer) => {
-                this.buffers.set(name, buffer);
-            });
+            this.loader.load(
+                path,
+                (buffer) => {
+                    this.buffers.set(name, buffer);
+                },
+                undefined, // onProgress
+                (error) => {
+                    // Исправлено: добавлена обработка ошибок загрузки звуков
+                    console.warn(`Не удалось загрузить звук: ${path}`, error);
+                }
+            );
         });
     }
 
     play(soundName, volume = 1.0, detune = true) {
-        if (!this.buffers.has(soundName)) return;
+        if (!this.enabled || !this.buffers.has(soundName)) return;
 
         const sound = new THREE.Audio(this.listener);
         sound.setBuffer(this.buffers.get(soundName));
-        sound.setVolume(volume);
+        
+        // Применяем настройки громкости
+        const finalVolume = volume * this.masterVolume * this.soundEffectsVolume;
+        sound.setVolume(finalVolume);
 
         // Немного меняем питч, чтобы звук не звучал роботизированно
         if (detune) {
@@ -57,5 +74,22 @@ export class SoundManager {
     playPlace(soundType) {
         if (!soundType) return;
         this.play(soundType.place, 0.8);
+    }
+
+    // Методы для настроек
+    setMasterVolume(value) {
+        this.masterVolume = Math.max(0, Math.min(1, value));
+    }
+
+    setSoundEffectsVolume(value) {
+        this.soundEffectsVolume = Math.max(0, Math.min(1, value));
+    }
+
+    setMusicVolume(value) {
+        this.musicVolume = Math.max(0, Math.min(1, value));
+    }
+
+    setEnabled(value) {
+        this.enabled = value;
     }
 }

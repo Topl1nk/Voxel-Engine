@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voxel Engine - Phase 5 (Fixed)</title>
+    <title>Voxel Engine</title>
     <link rel="stylesheet" href="css/style.css">
     <script type="importmap">
         {
@@ -20,15 +20,202 @@
         <p>Pos: <span id="coords">0, 0, 0</span></p>
         <p>Selected: <span id="block-name">Stone</span></p>
         <p id="status-text" style="color: yellow; font-weight: bold;">PAUSED</p>
+        <p style="color: cyan;">Sky: <span id="sky-info">Loading...</span></p>
     </div>
     
     <div id="crosshair"></div>
     
+    <!-- Кнопка настроек в правом верхнем углу -->
+    <button id="settings-btn" class="settings-button" title="Настройки">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m15.364-4.636l-4.243 4.243m0 4.243l4.243 4.243M4.636 4.636l4.243 4.243m0 4.243l-4.243 4.243"></path>
+        </svg>
+    </button>
+    
     <div id="menu-overlay">
-        <h1>VOXEL ENGINE</h1>
-        <p>Phase 5: Fixed</p>
-        <br>
-        <button id="start-btn">RESUME GAME</button> <p style="margin-top: 20px; font-size: 14px; color: #aaa;">WASD to Move, SPACE to Jump, 1-6 to Select Block</p>
+        <div class="menu-content">
+            <h1>VOXEL ENGINE</h1>
+            <p class="menu-subtitle">Voxel World</p>
+            <div class="menu-buttons">
+                <button id="start-btn" class="menu-btn primary">RESUME GAME</button>
+                <button id="settings-menu-btn" class="menu-btn secondary">НАСТРОЙКИ</button>
+            </div>
+            <p class="menu-hint">WASD to Move, SPACE to Jump, 1-9 to Select Block, ESC to Pause</p>
+        </div>
+    </div>
+
+    <!-- Меню настроек -->
+    <div id="settings-overlay" class="settings-overlay">
+        <div class="settings-content">
+            <div class="settings-header">
+                <h2>НАСТРОЙКИ</h2>
+                <button id="settings-close-btn" class="close-btn">×</button>
+            </div>
+            
+            <div class="settings-body">
+                <!-- Графика -->
+                <div class="settings-section">
+                    <h3>Графика</h3>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Сглаживание (Antialiasing)</span>
+                            <input type="checkbox" id="setting-antialiasing" class="setting-checkbox">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Тени</span>
+                            <input type="checkbox" id="setting-shadows" class="setting-checkbox">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Качество теней</span>
+                            <select id="setting-shadow-quality" class="setting-select">
+                                <option value="0">Низкое</option>
+                                <option value="1">Среднее</option>
+                                <option value="2" selected>Высокое</option>
+                            </select>
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Дальность прорисовки: <span id="render-distance-value">6</span></span>
+                            <input type="range" id="setting-render-distance" class="setting-slider" min="3" max="12" value="6" step="1">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Туман</span>
+                            <input type="checkbox" id="setting-fog" class="setting-checkbox">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>VSync</span>
+                            <input type="checkbox" id="setting-vsync" class="setting-checkbox">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Pixel Ratio: <span id="pixel-ratio-value">2</span></span>
+                            <input type="range" id="setting-pixel-ratio" class="setting-slider" min="1" max="3" value="2" step="1">
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Облака -->
+                <!-- Звук -->
+                <div class="settings-section">
+                    <h3>Звук</h3>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Включить звук</span>
+                            <input type="checkbox" id="setting-sound-enabled" class="setting-checkbox">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Общая громкость: <span id="master-volume-value">100</span>%</span>
+                            <input type="range" id="setting-master-volume" class="setting-slider" min="0" max="100" value="100" step="1">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Громкость эффектов: <span id="sfx-volume-value">100</span>%</span>
+                            <input type="range" id="setting-sfx-volume" class="setting-slider" min="0" max="100" value="100" step="1">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Громкость музыки: <span id="music-volume-value">50</span>%</span>
+                            <input type="range" id="setting-music-volume" class="setting-slider" min="0" max="100" value="50" step="1">
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Управление -->
+                <div class="settings-section">
+                    <h3>Управление</h3>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Чувствительность мыши: <span id="mouse-sensitivity-value">1.0</span></span>
+                            <input type="range" id="setting-mouse-sensitivity" class="setting-slider" min="0.1" max="3.0" value="1.0" step="0.1">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Поле зрения (FOV): <span id="fov-value">75</span></span>
+                            <input type="range" id="setting-fov" class="setting-slider" min="60" max="110" value="75" step="5">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Покачивание камеры при ходьбе</span>
+                            <input type="checkbox" id="setting-bobbing" class="setting-checkbox">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Скорость времени: <span id="time-speed-value">1.00</span>x</span>
+                            <input type="range" id="setting-time-speed" class="setting-slider" min="0" max="5" value="1.0" step="0.1">
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Облака -->
+                <div class="settings-section">
+                    <h3>☁️ Облака</h3>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Покрытие облаками: <span id="cloud-coverage-value">20%</span></span>
+                            <input type="range" id="setting-cloud-coverage" class="setting-slider" min="0" max="0.8" value="0.20" step="0.05">
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Производительность -->
+                <div class="settings-section">
+                    <h3>Производительность</h3>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Ограничение FPS: <span id="max-fps-value">0</span> (0 = без ограничения)</span>
+                            <input type="range" id="setting-max-fps" class="setting-slider" min="0" max="144" value="0" step="1">
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>
+                            <span>Скорость загрузки чанков: <span id="chunk-load-speed-value">2</span></span>
+                            <input type="range" id="setting-chunk-load-speed" class="setting-slider" min="1" max="5" value="2" step="1">
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="settings-footer">
+                <button id="settings-reset-btn" class="menu-btn secondary">Сбросить</button>
+                <button id="settings-apply-btn" class="menu-btn primary">Применить</button>
+            </div>
+        </div>
     </div>
 
     <div id="hotbar"></div>

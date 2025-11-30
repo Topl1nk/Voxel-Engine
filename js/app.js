@@ -1,100 +1,328 @@
-// app.js - ИСПРАВЛЕННАЯ ВЕРСИЯ ДЛЯ ВАШЕЙ СТРУКТУРЫ
 import * as THREE from 'three';
 import { World } from './world.js';
 import { Player } from './player.js';
-import { Sky } from './sky.js';
+import { WORLD_CONFIG } from './constants.js';
 import { SoundManager } from './sound.js';
-import { BLOCKS } from './constants.js';
+import { SettingsManager } from './settings.js';
+import { Sky } from './sky.js';
 
 class Application {
     constructor() {
-        this.dayTime = 0;
-        this.dayDuration = 300;
-
+        // Объявляем переменные ДО инициализации сцены
+        this.skyColor = new THREE.Color(0x87CEEB); // Голубое небо
+        this.caveColor = new THREE.Color(0x050505); // Почти черный для пещер
+        this.tempColor = new THREE.Color();
         this.clock = new THREE.Clock();
         this.isPaused = true;
+        this.lastFrameTime = 0;
+        this.frameCount = 0;
+        this.fpsUpdateInterval = 0.5; // Обновляем FPS каждые 0.5 секунды
+        this.fpsUpdateTimer = 0;
 
-        // ИНИЦИАЛИЗАЦИЯ UI С ПРОВЕРКОЙ
-        this.ui = {
-            fps: document.getElementById('fps-counter'),
-            chunks: document.getElementById('chunk-count'),
-            coords: document.getElementById('coords'),
-            block: document.getElementById('block-name'),
-            menu: document.getElementById('menu-overlay'),
-            startBtn: document.getElementById('start-btn'),
-            status: document.getElementById('status-text'),
-            crosshair: document.getElementById('crosshair'),
-            hotbar: document.getElementById('hotbar')
-        };
+        // Система дня и ночи
+        // dayTime: 0.0 = полночь, 0.25 = рассвет, 0.5 = полдень, 0.75 = закат, 1.0 = полночь
+        this.dayTime = 0.5; // Начинаем с полдня
+        this.baseDaySpeed = 0.0001; // Базовая скорость смены дня и ночи
+        
+        // Константы для системы дня/ночи
+        this.SUN_RADIUS = 300; // Радиус орбиты солнца
+        this.SUN_BASE_HEIGHT = 100; // Базовая высота для центрирования
+        this.MOON_RADIUS_MULTIPLIER = 0.8; // Луна немного ближе
+        this.MOON_Z_OFFSET = 0.3; // Луна смещена по Z
 
-        this.frames = 0;
-        this.lastTime = 0;
+        // Инициализируем менеджер настроек
+        this.settings = new SettingsManager();
+        
+        // Константы для теней
+        this.SHADOW_MAP_SIZES = [512, 1024, 2048, 4096];
 
+        // Теперь можно инициализировать системы
         this.initRenderer();
         this.initScene();
-        this.soundManager = new SoundManager(this.camera);
         this.initWorld();
+        this.initUI();
+
         this.setupEvents();
         this.animate();
     }
 
     initRenderer() {
-        // АНТИАЛИАСИНГ ВКЛЮЧЕН С GREEDY MESHING
-        this.renderer = new THREE.WebGLRenderer({
-            antialias: true,
-            powerPreference: "high-performance"
+        const antialias = this.settings.get('antialiasing');
+        this.renderer = new THREE.WebGLRenderer({ 
+            antialias: antialias, 
+            powerPreference: "high-performance" 
         });
-
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.renderer.shadowMap.enabled = true;
+        this.settings.applyToRenderer(this.renderer);
+        this.renderer.shadowMap.enabled = this.settings.get('shadows');
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-        this.renderer.toneMapping = THREE.NoToneMapping;
         document.body.appendChild(this.renderer.domElement);
     }
 
     initScene() {
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x87CEEB);
-        this.scene.fog = new THREE.Fog(0x87CEEB, 50, 200);
+        this.scene.background = this.skyColor.clone();
 
-        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const fogDist = this.settings.get('renderDistance') * WORLD_CONFIG.CHUNK_SIZE;
+        if (this.settings.get('fogEnabled')) {
+            this.scene.fog = new THREE.Fog(this.skyColor, 20, fogDist - 10);
+        }
 
-        // ОПТИМИЗИРОВАННЫЕ НАСТРОЙКИ ОСВЕЩЕНИЯ
+        this.camera = new THREE.PerspectiveCamera(
+            this.settings.get('fov'), 
+            window.innerWidth / window.innerHeight, 
+            0.1, 
+            2000 // Увеличено для солнца/луны (радиус орбиты 300)
+        );
+        this.settings.applyToCamera(this.camera);
+
+        // 1. AMBIENT LIGHT (уменьшен для более контрастных теней)
+        this.ambient = new THREE.AmbientLight(0xffffff, 0.1);
+        this.scene.add(this.ambient);
+
+        // 2. HEMISPHERE LIGHT
+        this.hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x444444, 0.2);
+        this.scene.add(this.hemiLight);
+
+        // 3. SUN LIGHT
         this.sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        this.sun.position.set(50, 100, 50);
+        // ИСПРАВЛЕНО: Тени всегда включены, меняется только качество
         this.sun.castShadow = true;
-        this.sun.shadow.mapSize.width = 2048;
-        this.sun.shadow.mapSize.height = 2048;
+
+        // Настройка теней в зависимости от качества - ИСПРАВЛЕНО
+        const shadowQuality = this.settings.get('shadowQuality');
+        const shadowMapSize = this.SHADOW_MAP_SIZES[Math.min(shadowQuality, this.SHADOW_MAP_SIZES.length - 1)] || 2048;
+        
+        // ИСПРАВЛЕНО: Shadow camera НЕ следует за игроком, чтобы тени не скакали
+        const d = 100; // Увеличена область теней
+        this.sun.shadow.camera.left = -d;
+        this.sun.shadow.camera.right = d;
+        this.sun.shadow.camera.top = d;
+        this.sun.shadow.camera.bottom = -d;
         this.sun.shadow.camera.near = 0.1;
-        this.sun.shadow.camera.far = 200;
+        this.sun.shadow.camera.far = 500;
 
-        const shadowDistance = 60;
-        this.sun.shadow.camera.left = -shadowDistance;
-        this.sun.shadow.camera.right = shadowDistance;
-        this.sun.shadow.camera.top = shadowDistance;
-        this.sun.shadow.camera.bottom = -shadowDistance;
+        this.sun.shadow.mapSize.width = shadowMapSize;
+        this.sun.shadow.mapSize.height = shadowMapSize;
 
-        // КРИТИЧЕСКИЕ НАСТРОЙКИ ДЛЯ УСТРАНЕНИЯ АРТЕФАКТОВ
         this.sun.shadow.bias = -0.0001;
-        this.sun.shadow.normalBias = 0.02;
+        this.sun.shadow.normalBias = 0.005;
 
         this.scene.add(this.sun);
         this.scene.add(this.sun.target);
+        
+        // Сохраняем фиксированную позицию для shadow camera
+        this.shadowCameraPosition = new THREE.Vector3(0, 0, 0);
 
-        this.moonLight = new THREE.DirectionalLight(0x445566, 0.2);
-        this.scene.add(this.moonLight);
-
-        this.ambient = new THREE.AmbientLight(0xffffff, 0.05);
-        this.scene.add(this.ambient);
-
-        this.sky = new Sky(this.scene);
+        // Инициализируем звук ПОСЛЕ создания камеры
+        this.soundManager = new SoundManager(this.camera);
+        this.settings.applyToSound(this.soundManager);
     }
 
     initWorld() {
         this.world = new World(this.scene);
-        this.player = new Player(this.camera, this.renderer.domElement, this.world, this.soundManager);
+        // Передаем soundManager игроку
+        this.player = new Player(
+            this.camera, 
+            this.renderer.domElement, 
+            this.world, 
+            this.soundManager,
+            this.settings
+        );
+        
+        // Применяем настройки к миру при инициализации
+        this.settings.applyToWorld(this.world);
+        
+        // Создаем систему неба после создания мира (чтобы получить доступ к текстуре атласа)
+        if (this.world.material && this.world.material.map) {
+            this.sky = new Sky(this.scene, this.world.material.map);
+            // Синхронизируем время суток
+            this.sky.dayTime = this.dayTime;
+        }
+        
         this.world.update(this.player.position);
+    }
+
+    initUI() {
+        // Загружаем настройки в UI
+        this.updateSettingsUI();
+        
+        // Настраиваем обработчики событий для настроек
+        this.setupSettingsHandlers();
+    }
+
+    setupSettingsHandlers() {
+        // Чекбоксы
+        document.getElementById('setting-antialiasing').checked = this.settings.get('antialiasing');
+        document.getElementById('setting-shadows').checked = this.settings.get('shadows');
+        document.getElementById('setting-fog').checked = this.settings.get('fogEnabled');
+        document.getElementById('setting-vsync').checked = this.settings.get('vsync');
+        document.getElementById('setting-sound-enabled').checked = this.settings.get('soundEnabled');
+        document.getElementById('setting-bobbing').checked = this.settings.get('bobbing');
+
+        // Селекты
+        document.getElementById('setting-shadow-quality').value = this.settings.get('shadowQuality');
+
+        // Слайдеры
+        this.setupSlider('setting-render-distance', 'renderDistance', 'render-distance-value', (v) => v);
+        this.setupSlider('setting-pixel-ratio', 'pixelRatio', 'pixel-ratio-value', (v) => v);
+        this.setupSlider('setting-master-volume', 'masterVolume', 'master-volume-value', (v) => Math.round(v * 100));
+        this.setupSlider('setting-sfx-volume', 'soundEffectsVolume', 'sfx-volume-value', (v) => Math.round(v * 100));
+        this.setupSlider('setting-music-volume', 'musicVolume', 'music-volume-value', (v) => Math.round(v * 100));
+        this.setupSlider('setting-mouse-sensitivity', 'mouseSensitivity', 'mouse-sensitivity-value', (v) => v.toFixed(1));
+        this.setupSlider('setting-fov', 'fov', 'fov-value', (v) => Math.round(v));
+        this.setupSlider('setting-time-speed', 'timeSpeed', 'time-speed-value', (v) => v.toFixed(2));
+        this.setupSlider('setting-max-fps', 'maxFPS', 'max-fps-value', (v) => v || '∞');
+        this.setupSlider('setting-chunk-load-speed', 'chunkLoadSpeed', 'chunk-load-speed-value', (v) => v);
+        this.setupSlider('setting-cloud-coverage', 'cloudCoverage', 'cloud-coverage-value', (v) => Math.round(v * 100) + '%');
+
+        // Обработчики чекбоксов
+        document.getElementById('setting-antialiasing').addEventListener('change', (e) => {
+            this.settings.set('antialiasing', e.target.checked);
+            this.applySettings();
+        });
+
+        document.getElementById('setting-shadows').addEventListener('change', (e) => {
+            this.settings.set('shadows', e.target.checked);
+            this.applySettings();
+        });
+
+        document.getElementById('setting-fog').addEventListener('change', (e) => {
+            this.settings.set('fogEnabled', e.target.checked);
+            this.applySettings();
+        });
+
+        document.getElementById('setting-vsync').addEventListener('change', (e) => {
+            this.settings.set('vsync', e.target.checked);
+            // VSync управляется через requestAnimationFrame, здесь просто сохраняем
+        });
+
+        document.getElementById('setting-sound-enabled').addEventListener('change', (e) => {
+            this.settings.set('soundEnabled', e.target.checked);
+            this.soundManager.setEnabled(e.target.checked);
+        });
+
+        document.getElementById('setting-bobbing').addEventListener('change', (e) => {
+            this.settings.set('bobbing', e.target.checked);
+            if (this.player) {
+                this.player.bobbingEnabled = e.target.checked;
+            }
+        });
+
+        document.getElementById('setting-shadow-quality').addEventListener('change', (e) => {
+            this.settings.set('shadowQuality', parseInt(e.target.value));
+            this.applySettings();
+        });
+
+        // Кнопки
+        document.getElementById('settings-apply-btn').addEventListener('click', () => {
+            this.applySettings();
+            this.closeSettings();
+        });
+
+        document.getElementById('settings-reset-btn').addEventListener('click', () => {
+            if (confirm('Сбросить все настройки к значениям по умолчанию?')) {
+                this.settings = new SettingsManager();
+                this.updateSettingsUI();
+                this.applySettings();
+            }
+        });
+    }
+
+    setupSlider(sliderId, settingKey, valueId, formatter) {
+        const slider = document.getElementById(sliderId);
+        const valueDisplay = document.getElementById(valueId);
+        
+        if (!slider || !valueDisplay) return;
+
+        // Устанавливаем начальное значение
+        const currentValue = this.settings.get(settingKey);
+        slider.value = currentValue;
+        valueDisplay.textContent = formatter(currentValue);
+
+        // Обработчик изменения
+        slider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            this.settings.set(settingKey, value);
+            valueDisplay.textContent = formatter(value);
+            
+            // Применяем некоторые настройки сразу
+            if (settingKey === 'masterVolume' || settingKey === 'soundEffectsVolume' || settingKey === 'musicVolume') {
+                this.settings.applyToSound(this.soundManager);
+            } else if (settingKey === 'fov') {
+                this.settings.applyToCamera(this.camera);
+            } else if (settingKey === 'pixelRatio') {
+                this.settings.applyToRenderer(this.renderer);
+            } else if (settingKey === 'mouseSensitivity' && this.player) {
+                this.player.mouseSensitivity = value;
+            } else if (settingKey === 'timeSpeed') {
+                // Скорость времени применяется автоматически в animate()
+            } else if (settingKey === 'chunkLoadSpeed' && this.world) {
+                this.world.chunkLoadSpeed = value;
+            } else if (settingKey === 'cloudCoverage') {
+                // Покрытие облаков применяется в следующем кадре
+                console.log('[Settings] Cloud coverage changed to:', value.toFixed(2));
+            }
+        });
+    }
+
+    updateSettingsUI() {
+        // Обновляем все элементы UI значениями из настроек
+        document.getElementById('setting-antialiasing').checked = this.settings.get('antialiasing');
+        document.getElementById('setting-shadows').checked = this.settings.get('shadows');
+        document.getElementById('setting-fog').checked = this.settings.get('fogEnabled');
+        document.getElementById('setting-vsync').checked = this.settings.get('vsync');
+        document.getElementById('setting-sound-enabled').checked = this.settings.get('soundEnabled');
+        document.getElementById('setting-bobbing').checked = this.settings.get('bobbing');
+        document.getElementById('setting-shadow-quality').value = this.settings.get('shadowQuality');
+        
+        // Обновляем слайдеры
+        document.getElementById('setting-render-distance').value = this.settings.get('renderDistance');
+        document.getElementById('render-distance-value').textContent = this.settings.get('renderDistance');
+        // ... остальные слайдеры обновляются через setupSlider
+    }
+
+    applySettings() {
+        // Применяем настройки графики
+        const antialias = this.settings.get('antialiasing');
+        // Нельзя изменить antialiasing после создания renderer, нужно пересоздать
+        // Для продакшена это нормально, но здесь просто предупреждаем
+        
+        // ИСПРАВЛЕНО: Тени всегда включены, меняется только качество
+        this.renderer.shadowMap.enabled = this.settings.get('shadows');
+        this.sun.castShadow = this.settings.get('shadows'); // Включаем/выключаем только через чекбокс
+        
+        // ИСПРАВЛЕНО: Качество теней меняет разрешение, но не выключает их
+        if (this.settings.get('shadows')) {
+            const shadowQuality = this.settings.get('shadowQuality');
+            const shadowMapSize = this.SHADOW_MAP_SIZES[Math.min(shadowQuality, this.SHADOW_MAP_SIZES.length - 1)] || 2048;
+            this.sun.shadow.mapSize.width = shadowMapSize;
+            this.sun.shadow.mapSize.height = shadowMapSize;
+        }
+
+        // Туман
+        if (this.settings.get('fogEnabled')) {
+            const fogDist = this.settings.get('renderDistance') * WORLD_CONFIG.CHUNK_SIZE;
+            if (!this.scene.fog) {
+                this.scene.fog = new THREE.Fog(this.skyColor, 20, fogDist - 10);
+            } else {
+                this.scene.fog.far = fogDist - 10;
+            }
+        } else {
+            this.scene.fog = null;
+        }
+
+        // Применяем остальные настройки
+        this.settings.applyToRenderer(this.renderer);
+        this.settings.applyToCamera(this.camera);
+        this.settings.applyToWorld(this.world);
+        this.settings.applyToSound(this.soundManager);
+        
+        // Обновляем renderDistance в world.config
+        if (this.world && this.world.config) {
+            this.world.config.RENDER_DISTANCE = this.settings.get('renderDistance');
+        }
     }
 
     setupEvents() {
@@ -104,145 +332,205 @@ class Application {
             this.renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        // ОБРАБОТКА КНОПКИ START С ПРОВЕРКОЙ
-        if (this.ui.startBtn) {
-            this.ui.startBtn.addEventListener('click', () => {
-                this.renderer.domElement.requestPointerLock();
-            });
-        }
-
-        document.addEventListener('pointerlockchange', () => {
-            if (document.pointerLockElement === this.renderer.domElement) {
-                this.isPaused = false;
-                if (this.ui.menu) this.ui.menu.style.display = 'none';
-                if (this.ui.status) this.ui.status.textContent = '';
-                if (this.ui.crosshair) this.ui.crosshair.style.display = 'block';
-            } else {
-                this.isPaused = true;
-                if (this.ui.menu) this.ui.menu.style.display = 'flex';
-                if (this.ui.status) this.ui.status.textContent = 'PAUSED';
-                if (this.ui.crosshair) this.ui.crosshair.style.display = 'none';
-            }
+        document.getElementById('start-btn')?.addEventListener('click', () => {
+            this.renderer.domElement.requestPointerLock();
         });
 
-        // КЛАВИША ESC ДЛЯ ВЫХОДА
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && document.pointerLockElement) {
+        document.getElementById('settings-menu-btn')?.addEventListener('click', () => {
+            this.openSettings();
+        });
+
+        document.getElementById('settings-btn')?.addEventListener('click', () => {
+            if (this.isPaused) {
+                this.openSettings();
+            } else {
+                // Если игра идет, ставим на паузу и открываем настройки
                 document.exitPointerLock();
             }
         });
-    }
 
-    updateEnvironment(dt) {
-        this.dayTime += dt;
-        if (this.dayTime > this.dayDuration) this.dayTime = 0;
+        document.getElementById('settings-close-btn')?.addEventListener('click', () => {
+            this.closeSettings();
+        });
 
-        const theta = (this.dayTime / this.dayDuration) * Math.PI * 2;
-        const sunHeight = Math.sin(theta);
-        const sunDist = 100;
-
-        const sunX = Math.cos(theta) * sunDist;
-        const sunY = Math.sin(theta) * sunDist;
-        const sunZ = Math.sin(theta * 0.5) * 20;
-
-        const moonX = -sunX;
-        const moonY = -sunY;
-        const moonZ = -sunZ;
-
-        this.sky.updateSunMoon(new THREE.Vector3(sunX, sunY, sunZ), new THREE.Vector3(moonX, moonY, moonZ));
-
-        this.sun.position.set(
-            this.player.position.x + sunX,
-            this.player.position.y + sunY,
-            this.player.position.z + sunZ
-        );
-        this.sun.target.position.copy(this.player.position);
-        this.sun.target.updateMatrixWorld();
-
-        this.sun.intensity = Math.max(0, sunHeight) * 1.5;
-        this.moonLight.position.set(this.player.position.x + moonX, this.player.position.y + moonY, this.player.position.z + moonZ);
-        this.moonLight.intensity = Math.max(0, -sunHeight) * 0.2;
-
-        this.ambient.intensity = 0.05 + Math.max(0, sunHeight) * 0.4;
-
-        const colorNight = new THREE.Color(0x050510);
-        const colorSunset = new THREE.Color(0xFD5E53);
-        const colorDay = new THREE.Color(0x87CEEB);
-
-        let targetColor = new THREE.Color();
-
-        if (sunHeight < -0.2) {
-            targetColor.copy(colorNight);
-        } else if (sunHeight < 0.2) {
-            const t = (sunHeight + 0.2) / 0.4;
-            if (t < 0.5) {
-                targetColor.lerpColors(colorNight, colorSunset, t * 2.0);
-            } else {
-                targetColor.lerpColors(colorSunset, colorDay, (t - 0.5) * 2.0);
-            }
-        } else {
-            targetColor.copy(colorDay);
-        }
-
-        this.scene.fog.color.copy(targetColor);
-        if (this.scene.background) this.scene.background.copy(targetColor);
-    }
-
-    updateUI() {
-        this.frames++;
-        const time = performance.now();
-        if (time >= this.lastTime + 1000) {
-            if (this.ui.fps) this.ui.fps.textContent = this.frames;
-            this.frames = 0;
-            this.lastTime = time;
-        }
-
-        if (this.ui.coords && this.player) {
-            const x = Math.floor(this.player.position.x);
-            const y = Math.floor(this.player.position.y);
-            const z = Math.floor(this.player.position.z);
-            this.ui.coords.textContent = `${x}, ${y}, ${z}`;
-        }
-
-        if (this.ui.chunks && this.world.chunks) {
-            const count = this.world.chunks.size || 0;
-            this.ui.chunks.textContent = count;
-        }
-
-        if (this.ui.block && this.player && this.player.selectedBlock) {
-            let blockName = "Unknown";
-            for (const [key, val] of Object.entries(BLOCKS)) {
-                if (val.id === this.player.selectedBlock) {
-                    blockName = key;
-                    break;
+        // Закрытие настроек по ESC
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (document.getElementById('settings-overlay').classList.contains('active')) {
+                    this.closeSettings();
+                } else if (!this.isPaused) {
+                    document.exitPointerLock();
                 }
             }
-            this.ui.block.textContent = blockName;
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            this.isPaused = (document.pointerLockElement !== this.renderer.domElement);
+            document.getElementById('menu-overlay').style.display = this.isPaused ? 'flex' : 'none';
+            if (this.isPaused) {
+                document.getElementById('settings-overlay').classList.remove('active');
+            }
+        });
+    }
+
+    openSettings() {
+        document.getElementById('settings-overlay').classList.add('active');
+        this.updateSettingsUI();
+    }
+
+    closeSettings() {
+        document.getElementById('settings-overlay').classList.remove('active');
+    }
+
+    updateEnvironment() {
+        // Защита от NaN, если физика игрока заглючит
+        if (!this.player || !this.player.position) {
+            // Если игрок еще не инициализирован, используем базовый цвет неба
+            this.scene.background = this.skyColor.clone();
+            return;
+        }
+
+        const y = this.player.position.y;
+
+        // Интерполяция для пещер/неба:
+        // y > 40: Небо (factor = 1)
+        // y < 10: Пещера (factor = 0)
+        const caveFactor = THREE.MathUtils.smoothstep(y, 10, 40);
+        
+        // Получаем цвет неба от системы неба (если она существует)
+        let skyColor;
+        if (this.sky) {
+            skyColor = this.sky.getSkyColor();
+        } else {
+            // Fallback на старую систему
+            const sunAngle = (this.dayTime - 0.25) * Math.PI * 2.0;
+            const sunElevation = Math.sin(sunAngle);
+            const dayFactor = (sunElevation + 1.0) * 0.5;
+            
+            const daySkyColor = this.skyColor.clone();
+            const nightSkyColor = new THREE.Color(0x000814);
+            skyColor = new THREE.Color();
+            skyColor.lerpColors(nightSkyColor, daySkyColor, dayFactor);
+        }
+        
+        // Применяем фактор пещеры
+        this.tempColor.lerpColors(this.caveColor, skyColor, caveFactor);
+        
+        this.scene.background.copy(this.tempColor);
+
+        if (this.scene.fog) {
+            this.scene.fog.color.copy(this.tempColor);
         }
     }
 
     animate() {
         requestAnimationFrame(() => this.animate());
+
+        const currentTime = performance.now();
         const dt = Math.min(this.clock.getDelta(), 0.1);
 
+        // Ограничение FPS
+        const maxFPS = this.settings.get('maxFPS');
+        if (maxFPS > 0) {
+            const minFrameTime = 1000 / maxFPS;
+            const elapsed = currentTime - this.lastFrameTime;
+            if (elapsed < minFrameTime) {
+                return;
+            }
+            this.lastFrameTime = currentTime;
+        }
+
+        // Обновляем систему неба
+        if (this.sky && this.player && this.player.position) {
+            const timeSpeed = this.settings.get('timeSpeed');
+            const cloudCoverage = this.settings.get('cloudCoverage');
+            const skyData = this.sky.update(dt, this.player.position, this.camera, this.isPaused ? 0 : timeSpeed, cloudCoverage);
+            
+            // Синхронизируем dayTime с системой неба
+            this.dayTime = skyData.dayTime;
+            
+            // Обновляем освещение на основе данных системы неба
+            if (this.sun) {
+                // Базовая интенсивность от времени суток
+                const baseSunIntensity = this.sky.getLightIntensity();
+                
+                // Применяем затенение от облаков
+                const cloudShadowFactor = this.sky.getCloudShadowFactor();
+                this.sun.intensity = baseSunIntensity * cloudShadowFactor;
+                
+                // Обновляем позицию солнца для теней
+                const sunAngle = (this.dayTime - 0.25) * Math.PI * 2.0;
+                const sunX = Math.cos(sunAngle) * this.SUN_RADIUS;
+                const sunY = Math.sin(sunAngle) * this.SUN_RADIUS;
+                
+                const sunPos = new THREE.Vector3(
+                    this.player.position.x + sunX,
+                    sunY + this.SUN_BASE_HEIGHT,
+                    this.player.position.z
+                );
+                
+                this.sun.position.copy(sunPos);
+                this.sun.target.position.set(
+                    this.shadowCameraPosition.x,
+                    this.shadowCameraPosition.y,
+                    this.shadowCameraPosition.z
+                );
+                this.sun.target.updateMatrixWorld();
+                
+                this.sun.shadow.camera.position.copy(sunPos);
+                this.sun.shadow.camera.lookAt(this.shadowCameraPosition);
+                this.sun.shadow.camera.updateMatrixWorld();
+            }
+            
+            // Ambient и hemisphere свет тоже слегка затеняются облаками
+            if (this.ambient) {
+                const baseAmbient = this.sky.getAmbientIntensity();
+                const cloudFactor = this.sky.getCloudShadowFactor();
+                // Ambient меньше затеняется (80% облачного фактора + 20% всегда)
+                this.ambient.intensity = baseAmbient * (0.2 + cloudFactor * 0.8);
+            }
+            if (this.hemiLight) {
+                const baseHemi = this.sky.getHemisphereIntensity();
+                const cloudFactor = this.sky.getCloudShadowFactor();
+                this.hemiLight.intensity = baseHemi * cloudFactor;
+            }
+        }
+        
+        // Обновляем фон и окружение
+        this.updateEnvironment();
+
         if (!this.isPaused) {
-            this.player.update(dt);
-            this.world.update(this.player.position);
-            this.updateEnvironment(dt);
-            if (this.sky) this.sky.update(this.player.position, this.clock.elapsedTime);
-            this.updateUI();
+            if (this.player) {
+                this.player.update(dt);
+                if (this.world && this.player.position && this.sky) {
+                    // Передаем время и высоту облаков для теней
+                    const time = this.sky.cloudMaterial ? this.sky.cloudMaterial.uniforms.uTime.value : 0;
+                    const cloudCoverage = this.settings.get('cloudCoverage');
+                    this.world.update(this.player.position, time, this.sky.CLOUD_HEIGHT, cloudCoverage);
+                } else if (this.world && this.player.position) {
+                    this.world.update(this.player.position);
+                }
+            }
         }
 
         this.renderer.render(this.scene, this.camera);
+
+        // Обновляем FPS с интервалом
+        this.fpsUpdateTimer += dt;
+        if (this.fpsUpdateTimer >= this.fpsUpdateInterval) {
+            const fpsEl = document.getElementById('fps-counter');
+            if (fpsEl) {
+                const fps = dt > 0.001 ? Math.round(1/dt) : 0;
+                fpsEl.innerText = fps;
+            }
+            this.fpsUpdateTimer = 0;
+        }
+
+        const coordEl = document.getElementById('coords');
+        if (coordEl && this.player && this.player.position) {
+            coordEl.innerText = `${Math.floor(this.player.position.x)}, ${Math.floor(this.player.position.y)}, ${Math.floor(this.player.position.z)}`;
+        }
     }
 }
 
-// ЗАГРУЗКА С ОБРАБОТКОЙ ОШИБОК
-window.onload = () => {
-    try {
-        const app = new Application();
-        console.log('Voxel Engine started successfully');
-    } catch (error) {
-        console.error('Failed to start Voxel Engine:', error);
-    }
-};
+new Application();

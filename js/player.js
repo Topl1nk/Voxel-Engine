@@ -2,12 +2,13 @@ import * as THREE from 'three';
 import { WORLD_CONFIG, BLOCK, BLOCKS } from './constants.js';
 
 export class Player {
-    // 1. Принимаем soundManager в конструкторе
-    constructor(camera, domElement, world, soundManager) {
+    // 1. Принимаем soundManager и settings в конструкторе
+    constructor(camera, domElement, world, soundManager, settings) {
         this.camera = camera;
         this.world = world;
         this.domElement = domElement;
         this.soundManager = soundManager; // Сохраняем ссылку
+        this.settings = settings;
 
         // --- PHYSICS CONFIG ---
         this.position = new THREE.Vector3(10, 80, 10);
@@ -23,6 +24,14 @@ export class Player {
         this.cameraHeight = 1.6;
         this.radius = 0.3;
 
+        // Настройки из менеджера настроек
+        this.mouseSensitivity = settings ? settings.get('mouseSensitivity') : 1.0;
+        this.bobbingEnabled = settings ? settings.get('bobbing') : true;
+        this.bobTime = 0;
+        this.bobAmount = 0.08; // УВЕЛИЧЕНА АМПЛИТУДА для размашистого движения
+        this.lastBobY = 0;
+        this.lastBobX = 0;
+
         // State
         this.moveState = { f: 0, b: 0, l: 0, r: 0 };
         this.yaw = 0;
@@ -35,8 +44,8 @@ export class Player {
 
         // Inventory
         this.selectedSlot = 0;
-        // Добавил стекло (6) в хотбар для теста
-        this.hotbar = [1, 2, 3, 4, 6, 8, 12, 13];
+        // Хотбар: убран несуществующий блок 8
+        this.hotbar = [1, 2, 3, 4, 6, 12, 13];
 
         this._tempVec = new THREE.Vector3();
         this._tempVec2 = new THREE.Vector3();
@@ -51,6 +60,7 @@ export class Player {
         const material = new THREE.LineBasicMaterial({ color: 0x000000 });
         this.selectionBox = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), material);
         this.selectionBox.visible = false;
+        // World имеет свойство scene, которое устанавливается в конструкторе
         this.world.scene.add(this.selectionBox);
         this.targetBlock = null;
     }
@@ -73,12 +83,26 @@ export class Player {
 
     setupInput() {
         document.addEventListener('keydown', e => {
+            // Исправлено: предотвращаем стандартное поведение для игровых клавиш
             switch(e.code) {
-                case 'KeyW': this.moveState.f = 1; break;
-                case 'KeyS': this.moveState.b = 1; break;
-                case 'KeyA': this.moveState.l = 1; break;
-                case 'KeyD': this.moveState.r = 1; break;
+                case 'KeyW': 
+                    e.preventDefault();
+                    this.moveState.f = 1; 
+                    break;
+                case 'KeyS': 
+                    e.preventDefault();
+                    this.moveState.b = 1; 
+                    break;
+                case 'KeyA': 
+                    e.preventDefault();
+                    this.moveState.l = 1; 
+                    break;
+                case 'KeyD': 
+                    e.preventDefault();
+                    this.moveState.r = 1; 
+                    break;
                 case 'Space':
+                    e.preventDefault(); // Исправлено: предотвращаем прокрутку страницы
                     if(this.onGround) {
                         this.velocity.y = this.jumpForce;
                         this.onGround = false;
@@ -86,6 +110,7 @@ export class Player {
                     break;
                 default:
                     if(e.key >= '1' && e.key <= '9') {
+                        e.preventDefault();
                         this.selectedSlot = parseInt(e.key) - 1;
                         if(this.selectedSlot >= this.hotbar.length) this.selectedSlot = this.hotbar.length - 1;
                         this.updateUI();
@@ -104,10 +129,19 @@ export class Player {
 
         document.addEventListener('mousemove', e => {
             if (document.pointerLockElement === this.domElement) {
-                this.yaw -= e.movementX * 0.002;
-                this.pitch -= e.movementY * 0.002;
+                // Используем настройку чувствительности мыши
+                const sensitivity = 0.002 * this.mouseSensitivity;
+                this.yaw -= e.movementX * sensitivity;
+                this.pitch -= e.movementY * sensitivity;
                 this.pitch = Math.max(-1.57, Math.min(1.57, this.pitch));
                 this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+            }
+        });
+
+        // Исправлено: предотвращаем контекстное меню при ПКМ
+        document.addEventListener('contextmenu', e => {
+            if (document.pointerLockElement === this.domElement) {
+                e.preventDefault();
             }
         });
 
@@ -120,14 +154,16 @@ export class Player {
             const breakProps = BLOCKS[breakId];
 
             if (e.button === 0) { // ЛКМ - Ломать
+                e.preventDefault(); // Исправлено: предотвращаем стандартное поведение
                 this.world.setBlock(this.targetBlock.x, this.targetBlock.y, this.targetBlock.z, BLOCK.AIR);
 
                 // 2. Играем звук ломания
-                if (breakProps && breakProps.sound) {
+                if (breakProps && breakProps.sound && this.soundManager) {
                     this.soundManager.playBreak(breakProps.sound);
                 }
 
             } else if (e.button === 2) { // ПКМ - Ставить
+                e.preventDefault(); // Исправлено: предотвращаем контекстное меню
                 const {x, y, z} = this.targetBlock;
                 const {x: nx, y: ny, z: nz} = this.targetBlock.normal;
 
@@ -144,7 +180,7 @@ export class Player {
 
                     // 3. Играем звук установки
                     const placeProps = BLOCKS[placeId];
-                    if (placeProps && placeProps.sound) {
+                    if (placeProps && placeProps.sound && this.soundManager) {
                         this.soundManager.playPlace(placeProps.sound);
                     }
                 }
@@ -181,7 +217,8 @@ export class Player {
             for (let by = minY; by <= maxY; by++) {
                 for (let bz = minZ; bz <= maxZ; bz++) {
                     const block = this.world.getBlock(bx, by, bz);
-                    if (block !== BLOCK.AIR && BLOCKS[block]?.solid) {
+                    // Унифицированная проверка: используем ту же логику, что и в chunk.js
+                    if (block !== BLOCK.AIR && BLOCKS[block] && !BLOCKS[block].transparent) {
                         return true;
                     }
                 }
@@ -260,7 +297,7 @@ export class Player {
                 const id = this.world.getBlock(underBlockPos.x, underBlockPos.y, underBlockPos.z);
                 const props = BLOCKS[id];
 
-                if (props && props.sound) {
+                if (props && props.sound && this.soundManager) {
                     this.soundManager.playStep(props.sound);
                 }
             }
@@ -268,9 +305,49 @@ export class Player {
             this.stepDistance = 0;
         }
 
-        // Обновляем камеру
+        // Обновляем камеру с покачиванием (bobbing) - знак бесконечности (восьмерка)
+        // ПЛАВНОЕ И РАЗМАШИСТОЕ ДВИЖЕНИЕ
         this.camera.position.copy(this.position);
-        this.camera.position.y += this.cameraHeight;
+        
+        let bobOffsetX = 0;
+        let bobOffsetY = 0;
+        
+        if (this.bobbingEnabled && this.onGround && (forward !== 0 || strafe !== 0)) {
+            const moveSpeed = Math.sqrt(this.velocity.x**2 + this.velocity.z**2);
+            // УМЕНЬШЕНА СКОРОСТЬ для плавности - было 4.0, стало 2.0
+            this.bobTime += moveSpeed * dt * 2.0;
+            
+            // Знак бесконечности (восьмерка): x = sin(t), y = sin(2*t)
+            // УВЕЛИЧЕНА АМПЛИТУДА для размашистого движения
+            const t = this.bobTime;
+            bobOffsetX = Math.sin(t) * this.bobAmount;
+            bobOffsetY = Math.sin(2.0 * t) * this.bobAmount * 0.6;
+            
+            // Применяем покачивание к камере относительно направления движения
+            const forwardDir = this._tempVec.set(0, 0, -1).applyAxisAngle(new THREE.Vector3(0,1,0), this.yaw);
+            const rightDir = this._tempVec2.set(1, 0, 0).applyAxisAngle(new THREE.Vector3(0,1,0), this.yaw);
+            
+            // ПЛАВНАЯ ИНТЕРПОЛЯЦИЯ для избежания тряски
+            const targetBobX = bobOffsetX;
+            const targetBobY = bobOffsetY;
+            
+            // Интерполируем от предыдущего значения
+            this.lastBobX += (targetBobX - this.lastBobX) * dt * 8.0;
+            this.lastBobY += (targetBobY - this.lastBobY) * dt * 8.0;
+            
+            this.camera.position.addScaledVector(forwardDir, this.lastBobX);
+            this.camera.position.addScaledVector(rightDir, this.lastBobX * 0.4);
+        } else {
+            // Плавно возвращаем камеру в исходное положение
+            this.lastBobX *= 0.9;
+            this.lastBobY *= 0.9;
+            this.bobTime *= 0.95;
+            if (Math.abs(this.bobTime) < 0.01) {
+                this.bobTime = 0;
+            }
+        }
+        
+        this.camera.position.y += this.cameraHeight + this.lastBobY;
 
         this.updateRaycast();
     }
@@ -295,7 +372,8 @@ export class Player {
 
              const block = this.world.getBlock(ix, iy, iz);
 
-             if (block !== BLOCK.AIR && BLOCKS[block]?.solid) {
+             // Унифицированная проверка: используем ту же логику, что и в chunk.js
+             if (block !== BLOCK.AIR && BLOCKS[block] && !BLOCKS[block].transparent) {
                  const cx = ix + 0.5, cy = iy + 0.5, cz = iz + 0.5;
                  const dx = px - cx, dy = py - cy, dz = pz - cz;
                  const ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
