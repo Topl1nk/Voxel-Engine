@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Engine - Phase 5 (Fixed)</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="ui-layer">
+        <p>FPS: <span id="fps-counter">0</span> | Chunks: <span id="chunk-count">0</span></p>
+        <p>Pos: <span id="coords">0, 0, 0</span></p>
+        <p>Selected: <span id="block-name">Stone</span></p>
+        <p id="status-text" style="color: yellow; font-weight: bold;">PAUSED</p>
+    </div>
+    
+    <div id="crosshair"></div>
+    
+    <div id="menu-overlay">
+        <h1>VOXEL ENGINE</h1>
+        <p>Phase 5: Fixed</p>
+        <br>
+        <button id="start-btn">RESUME GAME</button> <p style="margin-top: 20px; font-size: 14px; color: #aaa;">WASD to Move, SPACE to Jump, 1-6 to Select Block</p>
+    </div>
+
+    <div id="hotbar"></div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

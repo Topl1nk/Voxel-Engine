@@ -1,0 +1,109 @@
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #1a1a1a;
+    font-family: 'Courier New', Courier, monospace;
+    user-select: none;
+}
+
+#ui-layer {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    pointer-events: none;
+    z-index: 10;
+    text-shadow: 2px 2px 0 #000;
+}
+
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 20px;
+    height: 20px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    mix-blend-mode: difference;
+}
+#crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(255, 255, 255, 0.9);
+}
+#crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+#crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+
+#menu-overlay {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 20;
+    color: white;
+}
+#menu-overlay h1 {
+    font-size: 48px;
+    margin-bottom: 10px;
+    text-shadow: 4px 4px 0 #333;
+    color: #4CAF50;
+}
+#start-btn {
+    padding: 15px 40px;
+    font-size: 24px;
+    background: #555;
+    color: white;
+    border: 2px solid #888;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+}
+#start-btn:hover {
+    background: #777;
+    transform: scale(1.05);
+}
+
+#hotbar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 5px;
+    padding: 5px;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 4px;
+    pointer-events: none;
+}
+.slot {
+    width: 40px;
+    height: 40px;
+    border: 2px solid #555;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0,0,0,0.3);
+    color: white;
+    font-size: 10px;
+    position: relative;
+}
+.slot.active {
+    border-color: #fff;
+    transform: scale(1.1);
+    background: rgba(255, 255, 255, 0.2);
+}
+.slot span {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    font-weight: bold;
+}
+.block-preview {
+    width: 24px;
+    height: 24px;
+}
+
+
