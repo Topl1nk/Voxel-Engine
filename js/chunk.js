@@ -454,6 +454,9 @@ export class Chunk {
         this.mesh.position.set(this.chunkX * CHUNK_SIZE, 0, this.chunkZ * CHUNK_SIZE);
         this.mesh.castShadow = true;
         this.mesh.receiveShadow = true;
+        if (this.world && typeof this.world.registerCaster === 'function') {
+            this.world.registerCaster(this.mesh);
+        }
     }
 
     _validateGeometry(geometry, vertexCount, tileCount) {

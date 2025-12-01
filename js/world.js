@@ -24,6 +24,10 @@ export class World {
             vertexColors: true,
             shadowSide: THREE.FrontSide
         });
+
+        this.shadowCasters = new Set();
+        this.customDepthMaterial = this.createDepthMaterial();
+        this.customDistanceMaterial = this.createDistanceMaterial();
         this.debugMode = 0;
         this.baseAlphaTest = this.material.alphaTest ?? 0.1;
         
@@ -229,6 +233,189 @@ export class World {
         };
 
         this.chunkCoordCache = new THREE.Vector2();
+    }
+    
+    registerCaster(mesh) {
+        if (!mesh) return;
+        this.shadowCasters.add(mesh);
+        mesh.customDepthMaterial = this.customDepthMaterial;
+        mesh.customDistanceMaterial = this.customDistanceMaterial;
+    }
+    
+    logCasterInfo(limit = 5) {
+        const entries = Array.from(this.shadowCasters).slice(0, limit);
+        console.table(entries.map((mesh, idx) => ({
+            idx,
+            castShadow: mesh.castShadow,
+            receiveShadow: mesh.receiveShadow,
+            visible: mesh.visible,
+            position: mesh.position ? mesh.position.toArray().map(v => v.toFixed(2)) : 'n/a'
+        })));
+    }
+    
+    createDepthMaterial() {
+        const material = new THREE.MeshDepthMaterial({
+            depthPacking: THREE.RGBADepthPacking,
+            alphaTest: 0.0
+        });
+        material.onBeforeCompile = (shader) => {
+            shader.uniforms.uAtlasGrid = { value: WORLD_CONFIG.ATLAS_GRID };
+            shader.uniforms.uTilePadding = { value: 0.5 / WORLD_CONFIG.ATLAS_SIZE };
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <common>',
+                `#include <common>
+                attribute vec2 tileIndex;
+                varying vec2 vTileIndex;
+                uniform float uAtlasGrid;
+                uniform float uTilePadding;
+                `
+            );
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <uv_vertex>',
+                `#include <uv_vertex>
+                vTileIndex = tileIndex;
+                `
+            );
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <common>',
+                `#include <common>
+                varying vec2 vTileIndex;
+                uniform float uAtlasGrid;
+                uniform float uTilePadding;
+                
+                vec2 calcLocalUV(vec3 normal, vec3 pos) {
+                    vec3 n = normalize(normal);
+                    if (n.y > 0.5) {
+                        return vec2(fract(pos.x), fract(pos.z));
+                    }
+                    if (n.y < -0.5) {
+                        vec2 uv = vec2(fract(pos.x), fract(pos.z));
+                        uv.y = 1.0 - uv.y;
+                        return uv;
+                    }
+                    if (n.x > 0.5) {
+                        vec2 uv = vec2(1.0 - fract(pos.z), fract(pos.y));
+                        return uv;
+                    }
+                    if (n.x < -0.5) {
+                        return vec2(fract(pos.z), fract(pos.y));
+                    }
+                    if (n.z > 0.5) {
+                        return vec2(fract(pos.x), fract(pos.y));
+                    }
+                    vec2 uv = vec2(1.0 - fract(pos.x), fract(pos.y));
+                    return uv;
+                }
+                
+                vec2 calcAtlasUV(vec2 tileIndex, vec2 local) {
+                    float cell = 1.0 / uAtlasGrid;
+                    float uMin = tileIndex.x * cell + uTilePadding;
+                    float uMax = (tileIndex.x + 1.0) * cell - uTilePadding;
+                    float vMax = 1.0 - (tileIndex.y * cell) - uTilePadding;
+                    float vMin = 1.0 - ((tileIndex.y + 1.0) * cell) + uTilePadding;
+                    float u = mix(uMin, uMax, clamp(local.x, 0.0, 1.0));
+                    float v = mix(vMin, vMax, clamp(local.y, 0.0, 1.0));
+                    return vec2(u, v);
+                }
+                `
+            );
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <map_fragment>',
+                `
+                #ifdef USE_UV
+                    vec2 local = calcLocalUV(vViewPosition.xyz, vViewPosition.xyz);
+                    vec2 atlasUV = calcAtlasUV(vTileIndex, local);
+                    vec4 texelColor = texture2D( map, atlasUV );
+                    diffuseColor *= texelColor;
+                #endif
+                `
+            );
+        };
+        material.depthTest = true;
+        material.depthWrite = true;
+        return material;
+    }
+    
+    createDistanceMaterial() {
+        const material = new THREE.MeshDistanceMaterial({
+            alphaTest: 0.0
+        });
+        material.onBeforeCompile = (shader) => {
+            shader.uniforms.uAtlasGrid = { value: WORLD_CONFIG.ATLAS_GRID };
+            shader.uniforms.uTilePadding = { value: 0.5 / WORLD_CONFIG.ATLAS_SIZE };
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <common>',
+                `#include <common>
+                attribute vec2 tileIndex;
+                varying vec2 vTileIndex;
+                uniform float uAtlasGrid;
+                uniform float uTilePadding;
+                `
+            );
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <uv_vertex>',
+                `#include <uv_vertex>
+                vTileIndex = tileIndex;
+                `
+            );
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <common>',
+                `#include <common>
+                varying vec2 vTileIndex;
+                uniform float uAtlasGrid;
+                uniform float uTilePadding;
+                
+                vec2 calcLocalUV(vec3 normal, vec3 pos) {
+                    vec3 n = normalize(normal);
+                    if (n.y > 0.5) {
+                        return vec2(fract(pos.x), fract(pos.z));
+                    }
+                    if (n.y < -0.5) {
+                        vec2 uv = vec2(fract(pos.x), fract(pos.z));
+                        uv.y = 1.0 - uv.y;
+                        return uv;
+                    }
+                    if (n.x > 0.5) {
+                        vec2 uv = vec2(1.0 - fract(pos.z), fract(pos.y));
+                        return uv;
+                    }
+                    if (n.x < -0.5) {
+                        return vec2(fract(pos.z), fract(pos.y));
+                    }
+                    if (n.z > 0.5) {
+                        return vec2(fract(pos.x), fract(pos.y));
+                    }
+                    vec2 uv = vec2(1.0 - fract(pos.x), fract(pos.y));
+                    return uv;
+                }
+                
+                vec2 calcAtlasUV(vec2 tileIndex, vec2 local) {
+                    float cell = 1.0 / uAtlasGrid;
+                    float uMin = tileIndex.x * cell + uTilePadding;
+                    float uMax = (tileIndex.x + 1.0) * cell - uTilePadding;
+                    float vMax = 1.0 - (tileIndex.y * cell) - uTilePadding;
+                    float vMin = 1.0 - ((tileIndex.y + 1.0) * cell) + uTilePadding;
+                    float u = mix(uMin, uMax, clamp(local.x, 0.0, 1.0));
+                    float v = mix(vMin, vMax, clamp(local.y, 0.0, 1.0));
+                    return vec2(u, v);
+                }
+                `
+            );
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <color_fragment>',
+                `
+                #ifdef USE_UV
+                    vec2 local = calcLocalUV(vViewPosition.xyz, vViewPosition.xyz);
+                    vec2 atlasUV = calcAtlasUV(vTileIndex, local);
+                    vec4 texelColor = texture2D( map, atlasUV );
+                    diffuseColor *= texelColor;
+                #endif
+                `
+            );
+        };
+        material.depthTest = true;
+        material.depthWrite = true;
+        return material;
     }
 
     setDebugMode(mode = 0) {

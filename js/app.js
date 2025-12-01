@@ -54,7 +54,7 @@ class Application {
         this.debugAmbientEnabled = true;
         this.debugCloudLightingEnabled = true;
         this.debugViewIndex = 0;
-        this.debugViews = ['none', 'lighting', 'cameraNormals', 'worldNormals', 'depth', 'shadowMap', 'wireframe', 'tileIndex', 'localUV', 'atlasUV'];
+        this.debugViews = ['none', 'lighting', 'cameraNormals', 'worldNormals', 'depth', 'shadowFrustum', 'shadowMap', 'wireframe', 'tileIndex', 'localUV', 'atlasUV'];
         this.shadowDebugMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
         this.shadowDebugEnabled = false;
         const depthVertex = `
@@ -102,9 +102,6 @@ class Application {
             #include <packing>
             void main() {
                 float depth = unpackRGBAToDepth( texture2D( shadowMap, vUv ) );
-                if ( depth >= 0.9999 ) {
-                    discard;
-                }
                 gl_FragColor = vec4(vec3(depth), 1.0);
             }
         `;
@@ -365,6 +362,9 @@ class Application {
 
         this.scene.add(this.sun);
         this.scene.add(this.sun.target);
+        this.shadowCameraHelper = new THREE.CameraHelper(this.sun.shadow.camera);
+        this.shadowCameraHelper.visible = false;
+        this.scene.add(this.shadowCameraHelper);
         this.shadowCameraPosition = new THREE.Vector3(0, 0, 0);
         this.updateShadowRig(graphics.shadowDistance);
 
@@ -586,12 +586,13 @@ class Application {
         if (!this.sun || !this.sun.shadow) return;
         const graphics = this.activeGraphicsProfile || this.settings.getGraphicsConfig();
         const shadowRange = distanceOverride || graphics.shadowDistance || 140;
-        this.sun.shadow.camera.left = -shadowRange;
-        this.sun.shadow.camera.right = shadowRange;
-        this.sun.shadow.camera.top = shadowRange;
-        this.sun.shadow.camera.bottom = -shadowRange;
-        this.sun.shadow.camera.near = 0.5;
-        this.sun.shadow.camera.far = shadowRange * 3;
+        const half = shadowRange;
+        this.sun.shadow.camera.left = -half;
+        this.sun.shadow.camera.right = half;
+        this.sun.shadow.camera.top = half;
+        this.sun.shadow.camera.bottom = -half;
+        this.sun.shadow.camera.near = 0.1;
+        this.sun.shadow.camera.far = shadowRange * 4;
         this.sun.shadow.radius = graphics.shadowRadius ?? this.sun.shadow.radius;
         const { bias, normalBias } = this.computeShadowBiasValues(distanceOverride);
         this.sun.shadow.bias = bias;
@@ -630,13 +631,14 @@ class Application {
         }
     }
 
-    applyDebugView() {
+    applyDebugView(forceShadowRefresh = false) {
         const mode = this.debugViews[this.debugViewIndex] || 'none';
         const statusEl = document.getElementById('status-text');
         if (statusEl) {
             statusEl.textContent = `DEBUG: ${mode.toUpperCase()}`;
         }
         this.setWorldDebugMode(0);
+        this.scene.background = this.skyColor.clone();
         switch (mode) {
             case 'lighting':
                 this.scene.overrideMaterial = this.debugMaterials.lighting;
@@ -653,8 +655,17 @@ class Application {
                 this.debugMaterials.depth.uniforms.depthBias.value = this.camera.near;
                 this.scene.overrideMaterial = this.debugMaterials.depth;
                 break;
+            case 'shadowFrustum':
+                this.scene.overrideMaterial = null;
+                this.shadowCameraHelper.visible = true;
+                break;
             case 'shadowMap':
                 this.scene.overrideMaterial = null;
+                this.shadowCameraHelper.visible = false;
+                this.logShadowDebugInfo();
+                if (forceShadowRefresh) {
+                    this.forceShadowMapUpdate();
+                }
                 break;
             case 'wireframe':
                 this.scene.overrideMaterial = this.debugMaterials.wireframe;
@@ -673,6 +684,7 @@ class Application {
                 break;
             default:
                 this.scene.overrideMaterial = null;
+                this.shadowCameraHelper.visible = false;
         }
         console.log(`[Debug] View: ${mode}`);
     }
@@ -680,7 +692,44 @@ class Application {
     cycleDebugView(direction = 1) {
         const count = this.debugViews.length;
         this.debugViewIndex = (this.debugViewIndex + direction + count) % count;
-        this.applyDebugView();
+        const current = this.debugViews[this.debugViewIndex];
+        this.applyDebugView(current === 'shadowMap');
+    }
+
+    forceShadowMapUpdate() {
+        if (this.sun?.shadow?.map) {
+            this.sun.shadow.map.needsUpdate = true;
+        }
+        if (this.renderer?.shadowMap) {
+            this.renderer.shadowMap.needsUpdate = true;
+        }
+        if (this.renderer && this.scene && this.camera) {
+            this.renderer.compile(this.scene, this.camera);
+        }
+    }
+
+    logShadowDebugInfo() {
+        if (!this.sun) return;
+        const light = this.sun;
+        const target = light.target.position.clone();
+        const pos = light.position.clone();
+        const cam = light.shadow?.camera;
+        const playerPos = this.player?.position?.clone();
+        const info = {
+            playerPos: playerPos ? playerPos.toArray().map(v => v.toFixed(2)) : 'n/a',
+            sunPos: pos.toArray().map(v => v.toFixed(2)),
+            target: target.toArray().map(v => v.toFixed(2)),
+            shadowRange: this.activeGraphicsProfile?.shadowDistance,
+            camBounds: cam ? {
+                left: cam.left,
+                right: cam.right,
+                top: cam.top,
+                bottom: cam.bottom,
+                near: cam.near,
+                far: cam.far
+            } : 'n/a'
+        };
+        console.table(info);
     }
 
     setupGraphicsPresetButtons() {
@@ -1074,9 +1123,10 @@ class Application {
                 );
                 this.sun.target.updateMatrixWorld();
                 
-                this.sun.shadow.camera.position.copy(sunPos);
-                this.sun.shadow.camera.lookAt(this.shadowCameraPosition);
-                this.sun.shadow.camera.updateMatrixWorld();
+                this.sun.updateMatrixWorld();
+                if (this.shadowCameraHelper) {
+                    this.shadowCameraHelper.update();
+                }
             }
             
             if (this.ambient) {
@@ -1116,6 +1166,9 @@ class Application {
 
         const currentDebugMode = this.debugViews[this.debugViewIndex];
         if (currentDebugMode === 'shadowMap') {
+            // Сначала обновляем shadow map обычным рендером,
+            // чтобы текстура всегда была актуальной
+            this.renderer.render(this.scene, this.camera);
             const shadowTexture = this.sun?.shadow?.map?.texture;
             if (shadowTexture) {
                 this.shadowMapMaterial.uniforms.shadowMap.value = shadowTexture;
