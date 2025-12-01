@@ -16,12 +16,21 @@ export class Player {
         this.direction = new THREE.Vector3();
 
         this.speed = WORLD_CONFIG.PLAYER_SPEED;
+        this.baseSpeed = this.speed;
         this.jumpForce = WORLD_CONFIG.JUMP_STRENGTH;
         this.gravity = WORLD_CONFIG.GRAVITY;
 
         // Размеры хитбокса
         this.height = 1.8;
         this.cameraHeight = 1.6;
+        this.standHeight = this.height;
+        this.crouchHeight = 1.2;
+        this.cameraStandHeight = this.cameraHeight;
+        this.cameraCrouchHeight = 1.1;
+        this.sprintMultiplier = 1.7;
+        this.crouchMultiplier = 0.45;
+        this.isSprinting = false;
+        this.isCrouching = false;
         this.radius = 0.3;
 
         // Настройки из менеджера настроек
@@ -45,7 +54,9 @@ export class Player {
         // Inventory
         this.selectedSlot = 0;
         // Хотбар: убран несуществующий блок 8
-        this.hotbar = [1, 2, 3, 4, 6, 12, 13];
+        this.hotbar = [1, 2, 3, 4, 6, 12, 13, 2, 3];
+
+        this.updateBindings(settings ? settings.getKeyBindings() : this.getDefaultBindings());
 
         this._tempVec = new THREE.Vector3();
         this._tempVec2 = new THREE.Vector3();
@@ -83,49 +94,60 @@ export class Player {
 
     setupInput() {
         document.addEventListener('keydown', e => {
-            // Исправлено: предотвращаем стандартное поведение для игровых клавиш
-            switch(e.code) {
-                case 'KeyW': 
-                    e.preventDefault();
-                    this.moveState.f = 1; 
-                    break;
-                case 'KeyS': 
-                    e.preventDefault();
-                    this.moveState.b = 1; 
-                    break;
-                case 'KeyA': 
-                    e.preventDefault();
-                    this.moveState.l = 1; 
-                    break;
-                case 'KeyD': 
-                    e.preventDefault();
-                    this.moveState.r = 1; 
-                    break;
-                case 'Space':
-                    e.preventDefault(); // Исправлено: предотвращаем прокрутку страницы
-                    if(this.onGround) {
-                        this.velocity.y = this.jumpForce;
-                        this.onGround = false;
-                    }
-                    break;
-                default:
-                    if(e.key >= '1' && e.key <= '9') {
-                        e.preventDefault();
-                        this.selectedSlot = parseInt(e.key) - 1;
-                        if(this.selectedSlot >= this.hotbar.length) this.selectedSlot = this.hotbar.length - 1;
-                        this.updateUI();
-                    }
+            const code = e.code;
+            if (this.matchesBinding('moveForward', code)) {
+                e.preventDefault();
+                this.moveState.f = 1;
+            } else if (this.matchesBinding('moveBackward', code)) {
+                e.preventDefault();
+                this.moveState.b = 1;
+            } else if (this.matchesBinding('moveLeft', code)) {
+                e.preventDefault();
+                this.moveState.l = 1;
+            } else if (this.matchesBinding('moveRight', code)) {
+                e.preventDefault();
+                this.moveState.r = 1;
+            } else if (this.matchesBinding('jump', code)) {
+                e.preventDefault();
+                if (this.onGround) {
+                    this.velocity.y = this.jumpForce;
+                    this.onGround = false;
+                }
+            } else if (this.matchesBinding('sprint', code)) {
+                e.preventDefault();
+                this.setSprint(true);
+            } else if (this.matchesBinding('crouch', code)) {
+                e.preventDefault();
+                this.setCrouch(true);
+            } else if (e.key >= '1' && e.key <= '9') {
+                e.preventDefault();
+                this.selectedSlot = Math.min(parseInt(e.key, 10) - 1, this.hotbar.length - 1);
+                this.updateUI();
             }
         });
 
         document.addEventListener('keyup', e => {
-            switch(e.code) {
-                case 'KeyW': this.moveState.f = 0; break;
-                case 'KeyS': this.moveState.b = 0; break;
-                case 'KeyA': this.moveState.l = 0; break;
-                case 'KeyD': this.moveState.r = 0; break;
+            const code = e.code;
+            if (this.matchesBinding('moveForward', code)) this.moveState.f = 0;
+            else if (this.matchesBinding('moveBackward', code)) this.moveState.b = 0;
+            else if (this.matchesBinding('moveLeft', code)) this.moveState.l = 0;
+            else if (this.matchesBinding('moveRight', code)) this.moveState.r = 0;
+            else if (this.matchesBinding('sprint', code)) {
+                e.preventDefault();
+                this.setSprint(false);
+            } else if (this.matchesBinding('crouch', code)) {
+                e.preventDefault();
+                this.setCrouch(false);
             }
         });
+
+        document.addEventListener('wheel', (e) => {
+            if (document.pointerLockElement !== this.domElement) return;
+            e.preventDefault();
+            if (e.deltaY === 0) return;
+            const delta = e.deltaY > 0 ? 1 : -1;
+            this.changeSlot(delta);
+        }, { passive: false });
 
         document.addEventListener('mousemove', e => {
             if (document.pointerLockElement === this.domElement) {
@@ -188,14 +210,74 @@ export class Player {
         });
     }
 
+    matchesBinding(action, code) {
+        if (!this.bindings) return false;
+        const binding = this.bindings[action];
+        if (!binding) return false;
+        return binding === code;
+    }
+
+    getDefaultBindings() {
+        return {
+            moveForward: 'KeyW',
+            moveBackward: 'KeyS',
+            moveLeft: 'KeyA',
+            moveRight: 'KeyD',
+            jump: 'Space',
+            inventory: 'KeyE',
+            sprint: 'ShiftLeft',
+            crouch: 'ControlLeft',
+            toggleHUD: 'KeyP'
+        };
+    }
+
+    updateBindings(newBindings) {
+        this.bindings = { ...newBindings };
+    }
+
     updateUI() {
-        const slots = document.querySelectorAll('.slot');
+        const slots = document.querySelectorAll('.ui-hotbar .slot');
         slots.forEach((s, i) => {
-             s.classList.toggle('active', i === this.selectedSlot);
+            s.classList.toggle('active', i === this.selectedSlot);
         });
         const nameEl = document.getElementById('block-name');
         const blockId = this.hotbar[this.selectedSlot];
         if(nameEl && BLOCKS[blockId]) nameEl.innerText = BLOCKS[blockId].name;
+    }
+
+    setSprint(state) {
+        if (state && this.isCrouching) return;
+        this.isSprinting = state;
+    }
+
+    setCrouch(state) {
+        if (state === this.isCrouching) return;
+        if (!state) {
+            if (!this.canStandUp()) return;
+            this.isCrouching = false;
+            this.height = this.standHeight;
+            this.cameraHeight = this.cameraStandHeight;
+            return;
+        }
+        this.isCrouching = true;
+        this.isSprinting = false;
+        this.height = this.crouchHeight;
+        this.cameraHeight = this.cameraCrouchHeight;
+    }
+
+    canStandUp() {
+        const originalHeight = this.height;
+        this.height = this.standHeight;
+        const blocked = this.checkCollision(this.position);
+        this.height = originalHeight;
+        return !blocked;
+    }
+
+    changeSlot(delta) {
+        const length = this.hotbar.length;
+        if (!length) return;
+        this.selectedSlot = (this.selectedSlot + delta + length) % length;
+        this.updateUI();
     }
 
     // AABB Physics
@@ -241,7 +323,14 @@ export class Player {
 
             this.direction.addScaledVector(tempFwd, forward);
             this.direction.addScaledVector(tempRight, strafe);
-            this.direction.normalize().multiplyScalar(this.speed);
+            let moveSpeed = this.baseSpeed;
+            if (this.isSprinting && forward > 0 && this.onGround && !this.isCrouching) {
+                moveSpeed *= this.sprintMultiplier;
+            }
+            if (this.isCrouching) {
+                moveSpeed *= this.crouchMultiplier;
+            }
+            this.direction.normalize().multiplyScalar(moveSpeed);
         }
 
         this.velocity.x = this.direction.x;

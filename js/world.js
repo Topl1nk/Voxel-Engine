@@ -29,9 +29,11 @@ export class World {
             shader.uniforms.uTime = { value: 0 };
             shader.uniforms.uCloudHeight = { value: 200.0 };
             shader.uniforms.uCloudCoverage = { value: 0.80 }; // Инвертировано: 1.0 - 0.20
+            shader.uniforms.uAOIntensity = { value: 0.45 };
             
             // Сохраняем ссылку для обновления
             this.material.userData.shader = shader;
+            this.material.userData.aoUniform = shader.uniforms.uAOIntensity;
             
             // VERTEX SHADER: Добавляем varying для мировой позиции
             shader.vertexShader = shader.vertexShader.replace(
@@ -43,7 +45,12 @@ export class World {
             
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <worldpos_vertex>',
-                `#include <worldpos_vertex>
+                `
+                vec4 worldPosition = vec4( transformed, 1.0 );
+                #ifdef USE_INSTANCING
+                    worldPosition = instanceMatrix * worldPosition;
+                #endif
+                worldPosition = modelMatrix * worldPosition;
                 vWorldPosition = worldPosition.xyz;
                 `
             );
@@ -57,6 +64,7 @@ export class World {
                 uniform float uTime;
                 uniform float uCloudHeight;
                 uniform float uCloudCoverage;
+                uniform float uAOIntensity;
                 
                 float hash_simple(float n) {
                     return fract(sin(n) * 753.5453123);
@@ -104,6 +112,16 @@ export class World {
                     
                     return cloudShadow;
                 }
+                `
+            );
+
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <color_fragment>',
+                `#include <color_fragment>
+                #ifdef USE_COLOR
+                    float aoFactor = clamp((vColor.r + vColor.g + vColor.b) * 0.333, 0.0, 1.0);
+                    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * aoFactor, uAOIntensity);
+                #endif
                 `
             );
             
@@ -243,32 +261,43 @@ export class World {
             }
         }
 
-        let loaded = 0;
+        const pendingChunks = [];
         for (const key of validKeys) {
-            if (!this.chunks.has(key)) {
-                const [cx, cz] = key.split(':').map(Number);
-                
-                // Исправлено: проверка на валидность координат чанка
-                if (isNaN(cx) || isNaN(cz)) {
-                    console.warn(`Неверный формат ключа чанка: ${key}`);
-                    continue;
-                }
+            if (this.chunks.has(key)) continue;
 
-                // Передаем this (World), чтобы чанк мог видеть соседей
-                const chunk = new Chunk(cx, cz, this.material, this);
-
-                this.chunks.set(key, chunk);
-
-                if (chunk.mesh) {
-                    this.scene.add(chunk.mesh);
-                }
-
-                loaded++;
-                if (loaded >= this.chunkLoadSpeed) break;
+            const [cx, cz] = key.split(':').map(Number);
+            if (isNaN(cx) || isNaN(cz)) {
+                console.warn(`Неверный формат ключа чанка: ${key}`);
+                continue;
             }
+
+            const dx = cx - px;
+            const dz = cz - pz;
+            pendingChunks.push({ key, cx, cz, distSq: dx * dx + dz * dz });
+        }
+
+        pendingChunks.sort((a, b) => a.distSq - b.distSq);
+
+        let loaded = 0;
+        for (const info of pendingChunks) {
+            const chunk = new Chunk(info.cx, info.cz, this.material, this);
+            this.chunks.set(info.key, chunk);
+
+            if (chunk.mesh) {
+                this.scene.add(chunk.mesh);
+            }
+
+            loaded++;
+            if (loaded >= this.chunkLoadSpeed) break;
         }
 
         const el = document.getElementById('chunk-count');
         if(el) el.innerText = this.chunks.size;
+    }
+
+    setAOIntensity(value) {
+        if (this.material && this.material.userData && this.material.userData.aoUniform) {
+            this.material.userData.aoUniform.value = value;
+        }
     }
 }

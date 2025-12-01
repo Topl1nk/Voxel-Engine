@@ -1,6 +1,18 @@
 // Система настроек игры
 export class SettingsManager {
     constructor() {
+        this.defaultKeyBindings = {
+            moveForward: 'KeyW',
+            moveBackward: 'KeyS',
+            moveLeft: 'KeyA',
+            moveRight: 'KeyD',
+            jump: 'Space',
+            inventory: 'KeyE',
+            sprint: 'ShiftLeft',
+            crouch: 'ControlLeft',
+            toggleHUD: 'KeyP'
+        };
+
         this.settings = {
             // Графика
             antialiasing: false,
@@ -10,6 +22,11 @@ export class SettingsManager {
             fogEnabled: true,
             vsync: false,
             pixelRatio: 2,
+            toneMappingExposure: 1.1,
+            sunIntensity: 1.35,
+            ambientIntensity: 0.32,
+            shadowDistance: 140,
+            softShadows: true,
             
             // Звук
             masterVolume: 1.0,
@@ -30,7 +47,10 @@ export class SettingsManager {
             
             // Производительность
             maxFPS: 0, // 0 = unlimited
-            chunkLoadSpeed: 2
+            chunkLoadSpeed: 2,
+
+            // Клавиши
+            keyBindings: { ...this.defaultKeyBindings }
         };
         
         this.loadSettings();
@@ -41,6 +61,13 @@ export class SettingsManager {
         if (saved) {
             try {
                 const parsed = JSON.parse(saved);
+                if (parsed.keyBindings) {
+                    this.settings.keyBindings = {
+                        ...this.defaultKeyBindings,
+                        ...parsed.keyBindings
+                    };
+                    delete parsed.keyBindings;
+                }
                 this.settings = { ...this.settings, ...parsed };
             } catch (e) {
                 console.warn('Ошибка загрузки настроек:', e);
@@ -62,6 +89,24 @@ export class SettingsManager {
 
     set(key, value) {
         this.settings[key] = value;
+        this.saveSettings();
+    }
+
+    getKeyBindings() {
+        return { ...this.settings.keyBindings };
+    }
+
+    getKeyBinding(action) {
+        return this.settings.keyBindings[action] || '';
+    }
+
+    setKeyBinding(action, code) {
+        this.settings.keyBindings[action] = code;
+        this.saveSettings();
+    }
+
+    resetKeyBindings() {
+        this.settings.keyBindings = { ...this.defaultKeyBindings };
         this.saveSettings();
     }
 
@@ -87,6 +132,9 @@ export class SettingsManager {
                 if (world.material.userData.shader.uniforms.uCloudCoverage) {
                     world.material.userData.shader.uniforms.uCloudCoverage.value = this.get('cloudCoverage');
                 }
+            }
+            if (typeof world.setAOIntensity === 'function') {
+                world.setAOIntensity(this.get('ambientIntensity'));
             }
         }
     }

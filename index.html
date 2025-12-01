@@ -15,12 +15,40 @@
     </script>
 </head>
 <body>
-    <div id="ui-layer">
-        <p>FPS: <span id="fps-counter">0</span> | Chunks: <span id="chunk-count">0</span></p>
-        <p>Pos: <span id="coords">0, 0, 0</span></p>
-        <p>Selected: <span id="block-name">Stone</span></p>
-        <p id="status-text" style="color: yellow; font-weight: bold;">PAUSED</p>
-        <p style="color: cyan;">Sky: <span id="sky-info">Loading...</span></p>
+    <div id="ui-layer" class="hud">
+        <div class="hud-card hud-card-primary">
+            <div class="hud-row">
+                <div class="hud-stat">
+                    <span class="hud-label">FPS</span>
+                    <span class="hud-value" id="fps-counter">0</span>
+                </div>
+                <span class="hud-divider"></span>
+                <div class="hud-stat">
+                    <span class="hud-label">Чанки</span>
+                    <span class="hud-value" id="chunk-count">0</span>
+                </div>
+            </div>
+            <div class="hud-row">
+                <div class="hud-stat hud-stat-wide">
+                    <span class="hud-label">Координаты</span>
+                    <span class="hud-value" id="coords">0, 0, 0</span>
+                </div>
+            </div>
+            <div class="hud-row">
+                <div class="hud-stat hud-stat-wide">
+                    <span class="hud-label">Выбран блок</span>
+                    <span class="hud-value" id="block-name">Stone</span>
+                </div>
+            </div>
+        </div>
+        <div class="hud-card hud-card-status">
+            <span class="hud-label">Статус</span>
+            <span class="hud-value hud-status" id="status-text" data-state="pause">ПАУЗА</span>
+        </div>
+        <div class="hud-card hud-card-sky">
+            <span class="hud-label">Небо</span>
+            <span class="hud-value" id="sky-info">Загрузка...</span>
+        </div>
     </div>
     
     <div id="crosshair"></div>
@@ -38,22 +66,21 @@
             <h1>VOXEL ENGINE</h1>
             <p class="menu-subtitle">Voxel World</p>
             <div class="menu-buttons">
-                <button id="start-btn" class="menu-btn primary">RESUME GAME</button>
-                <button id="settings-menu-btn" class="menu-btn secondary">НАСТРОЙКИ</button>
+                <button id="start-btn" class="ui-btn primary">RESUME GAME</button>
+                <button id="settings-menu-btn" class="ui-btn secondary">НАСТРОЙКИ</button>
             </div>
-            <p class="menu-hint">WASD to Move, SPACE to Jump, 1-9 to Select Block, ESC to Pause</p>
         </div>
     </div>
 
     <!-- Меню настроек -->
-    <div id="settings-overlay" class="settings-overlay">
-        <div class="settings-content">
-            <div class="settings-header">
+    <div id="settings-overlay" class="ui-overlay settings-overlay">
+        <div class="ui-content settings-content">
+            <div class="ui-header settings-header">
                 <h2>НАСТРОЙКИ</h2>
-                <button id="settings-close-btn" class="close-btn">×</button>
+                <button id="settings-close-btn" class="ui-close-btn">×</button>
             </div>
             
-            <div class="settings-body">
+            <div class="ui-body settings-body">
                 <!-- Графика -->
                 <div class="settings-section">
                     <h3>Графика</h3>
@@ -108,6 +135,45 @@
                         <label>
                             <span>Pixel Ratio: <span id="pixel-ratio-value">2</span></span>
                             <input type="range" id="setting-pixel-ratio" class="setting-slider" min="1" max="3" value="2" step="1">
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <label>
+                            <span>Экспозиция: <span id="tone-mapping-value">1.10</span></span>
+                            <input type="range" id="setting-tone-mapping" class="setting-slider" min="0.5" max="2.0" value="1.1" step="0.05">
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <label>
+                            <span>Дистанция теней: <span id="shadow-distance-value">140</span></span>
+                            <input type="range" id="setting-shadow-distance" class="setting-slider" min="40" max="240" value="140" step="10">
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <label>
+                            <span>Мягкие тени</span>
+                            <input type="checkbox" id="setting-soft-shadows" class="setting-checkbox" checked>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Освещение</h3>
+
+                    <div class="setting-item">
+                        <label>
+                            <span>Яркость солнца: <span id="sun-intensity-value">1.35</span></span>
+                            <input type="range" id="setting-sun-intensity" class="setting-slider" min="0.5" max="2.5" value="1.35" step="0.05">
+                        </label>
+                    </div>
+
+                    <div class="setting-item">
+                        <label>
+                            <span>Окружающий свет: <span id="ambient-intensity-value">0.32</span></span>
+                            <input type="range" id="setting-ambient-intensity" class="setting-slider" min="0.1" max="1.0" value="0.32" step="0.02">
                         </label>
                     </div>
                 </div>
@@ -178,6 +244,48 @@
                         </label>
                     </div>
                 </div>
+
+                <div class="settings-section">
+                    <h3>Клавиши</h3>
+                    <div class="keybind-list">
+                        <div class="keybind-item">
+                            <span>Вперёд</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="moveForward">W</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>Назад</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="moveBackward">S</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>Влево</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="moveLeft">A</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>Вправо</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="moveRight">D</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>Прыжок</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="jump">Space</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>Инвентарь</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="inventory">E</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>Бег</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="sprint">Shift</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>Присесть</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="crouch">Ctrl</button>
+                        </div>
+                        <div class="keybind-item">
+                            <span>HUD</span>
+                            <button class="ui-btn tertiary keybind-btn" data-keybind="toggleHUD">P</button>
+                        </div>
+                    </div>
+                </div>
                 
                 <!-- Облака -->
                 <div class="settings-section">
@@ -211,15 +319,32 @@
                 </div>
             </div>
             
-            <div class="settings-footer">
-                <button id="settings-reset-btn" class="menu-btn secondary">Сбросить</button>
-                <button id="settings-apply-btn" class="menu-btn primary">Применить</button>
+            <div class="ui-footer settings-footer">
+                <button id="settings-reset-btn" class="ui-btn secondary">Сбросить</button>
+                <button id="settings-apply-btn" class="ui-btn primary">Применить</button>
             </div>
         </div>
     </div>
 
-    <div id="hotbar"></div>
+    <!-- Hotbar (руки) -->
+    <div id="hotbar" class="ui-hotbar"></div>
+
+    <!-- Инвентарь -->
+    <div id="inventory-overlay" class="ui-overlay">
+        <div class="ui-content inventory-content-wrapper">
+            <div class="ui-header">
+                <h2>📦 ИНВЕНТАРЬ</h2>
+                <button id="inventory-close-btn" class="ui-close-btn">×</button>
+            </div>
+            
+            <div class="ui-body">
+                <div id="inventory-grid" class="ui-grid"></div>
+            </div>
+            
+        </div>
+    </div>
 
     <script type="module" src="js/app.js"></script>
 </body>
 </html>
+

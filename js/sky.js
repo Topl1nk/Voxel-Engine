@@ -234,10 +234,14 @@ export class Sky {
         // Обновляем UI
         const skyInfoEl = document.getElementById('sky-info');
         if (skyInfoEl) {
+            const totalMinutes = (this.dayTime * 24 * 60) % (24 * 60);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = Math.floor(totalMinutes % 60);
+            const clock = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
             const timeOfDay = this.dayTime < 0.25 ? 'Ночь' : 
                               this.dayTime < 0.5 ? 'Утро' :
                               this.dayTime < 0.75 ? 'День' : 'Вечер';
-            skyInfoEl.textContent = `${timeOfDay} (${(this.dayTime * 100).toFixed(0)}%) | Солнце: ${sunElevation > 0 ? 'видно' : 'скрыто'}`;
+            skyInfoEl.textContent = `${timeOfDay}: ${clock}`;
         }
         
         return {
