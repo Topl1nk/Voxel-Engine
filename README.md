@@ -27,7 +27,7 @@
 ---
 
 ## Запуск
-   [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/Topl1nk/Voxel-Engine.git)
+[▶️ Live Demo](https://topl1nk.github.io/Voxel-Engine/)
 
 > Проект использует ES-модули. Открытие через `file://` не работает — нужен любой http-сервер.
 
