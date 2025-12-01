@@ -2,6 +2,8 @@
 
 ## Запуск проекта
 
+<img width="1919" height="1079" alt="Screenshot 2025-12-01 055951" src="https://github.com/user-attachments/assets/58cbaf03-9ee5-4adb-805d-c17dac685c6a" />
+
 **ВАЖНО:** Этот проект использует ES6 модули, поэтому его нельзя открывать напрямую через `file://` протокол. Необходимо использовать локальный веб-сервер.
 
 ### Способ 1: Python HTTP Server
