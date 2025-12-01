@@ -116,3 +116,7 @@ All values persist in `localStorage`; presets can be switched at runtime.
 | `npm install && npm run dev` | Use your custom dev script (if any) |
 
 ---
+
+## Credits
+
+This prototype—including all code, assets, and textures—was produced entirely with the assistance of AI copilots. The human “author” curated prompts and direction but did not hand-code the final result.
