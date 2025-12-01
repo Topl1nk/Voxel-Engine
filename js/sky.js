@@ -8,7 +8,7 @@ export class Sky {
         this.textureAtlas = textureAtlas;
         
         // Параметры неба
-        this.dayTime = 0.5; // 0 = полночь, 0.5 = полдень
+        this.dayTime = 0.32; // 0 = полночь, 0.5 = полдень
         this.baseDaySpeed = 0.0001; // Базовая скорость смены дня и ночи
         
         // Параметры солнца и луны
@@ -22,6 +22,7 @@ export class Sky {
         // Параметры облаков (соответствуют продвинутому шейдеру)
         this.CLOUD_HEIGHT = 200; // Высота начала облаков (в блоках) - подняли выше
         this.CLOUD_THICKNESS = 60; // Толщина слоя облаков (volumetric) - сделали тоньше
+        this.currentCoverage = 0.2;
         
         // Цвета неба
         this.daySkyColor = new THREE.Color(0x87CEEB); // Голубое небо
@@ -135,7 +136,7 @@ export class Sky {
             side: THREE.BackSide, // Рендерим внутреннюю сторону купола
             transparent: true,
             depthWrite: false,
-            depthTest: false, // Отключаем depth test для облаков
+            depthTest: true,
             blending: THREE.NormalBlending
         });
         
@@ -172,6 +173,7 @@ export class Sky {
             // ИНВЕРТИРУЕМ: 0% = нет облаков, 100% = максимум облаков
             // В шейдере это threshold для smoothstep, поэтому инвертируем
             this.cloudMaterial.uniforms.uCloudCoverage.value = 1.0 - cloudCoverage;
+            this.currentCoverage = cloudCoverage;
             
             // Debug: выводим покрытие каждые 5 секунд
             if (!this._lastCoverageLog || Date.now() - this._lastCoverageLog > 5000) {
@@ -309,12 +311,8 @@ export class Sky {
     
     // Получить затенение от облаков (влияет на общее освещение)
     getCloudShadowFactor() {
-        // Облака уменьшают прямой свет, но не ambient
-        // В зависимости от времени суток и покрытия облаками
-        const coverage = 0.3125; // CLOUD_COVERAGE из шейдера
-        const cloudDensityFactor = 0.7 + (1.0 - coverage) * 0.3; // 0.7 - 1.0
-        
-        return cloudDensityFactor;
+        const coverage = THREE.MathUtils.clamp(this.currentCoverage, 0.0, 1.0);
+        return 1.0 - coverage * 0.35;
     }
     
     // Очистка ресурсов

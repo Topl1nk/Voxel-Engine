@@ -30,7 +30,7 @@ class Application {
         this.hudVisible = true;
 
         // Система дня и ночи
-        this.dayTime = 0.5; // Начинаем с полдня
+        this.dayTime = 0.32; // Начинаем с мягкого утра
         this.baseDaySpeed = 0.0001; // Базовая скорость смены дня и ночи
         
         // Константы для системы дня/ночи
@@ -40,6 +40,7 @@ class Application {
         this.MOON_Z_OFFSET = 0.3; 
 
         this.settings = new SettingsManager();
+        this.activeGraphicsProfile = this.settings.getGraphicsConfig();
         this.keybindCapture = null;
         this.keybindButtons = new Map();
         this.keybindCaptureHandler = null;
@@ -49,10 +50,93 @@ class Application {
         this.renderPass = null;
         this.fxaaPass = null;
         this.postProcessingEnabled = false;
-        this.shadowSnapSize = 4;
-        
-        // Константы для теней
-        this.SHADOW_MAP_SIZES = [512, 1024, 2048, 4096];
+        this.shadowSnapSize = 6;
+        this.debugAmbientEnabled = true;
+        this.debugCloudLightingEnabled = true;
+        this.debugViewIndex = 0;
+        this.debugViews = ['none', 'lighting', 'cameraNormals', 'worldNormals', 'depth', 'shadowMap', 'wireframe'];
+        this.shadowDebugMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
+        this.shadowDebugEnabled = false;
+        const depthVertex = `
+            varying float vViewZ;
+            void main() {
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                vViewZ = -mvPosition.z;
+                gl_Position = projectionMatrix * mvPosition;
+            }
+        `;
+        const depthFragment = `
+            varying float vViewZ;
+            uniform float depthRange;
+            uniform float depthBias;
+            void main() {
+                float d = clamp((vViewZ - depthBias) / depthRange, 0.0, 1.0);
+                vec3 color = vec3(d, d * 0.65, 1.0 - d);
+                gl_FragColor = vec4(color, 1.0);
+            }
+        `;
+        const worldNormalVertex = `
+            varying vec3 vWorldNormal;
+            void main() {
+                vec4 worldPos = modelMatrix * vec4(position, 1.0);
+                vWorldNormal = normalize(mat3(modelMatrix) * normal) * 0.5 + 0.5;
+                gl_Position = projectionMatrix * viewMatrix * worldPos;
+            }
+        `;
+        const worldNormalFragment = `
+            varying vec3 vWorldNormal;
+            void main() {
+                gl_FragColor = vec4(vWorldNormal, 1.0);
+            }
+        `;
+        const shadowMapVertex = `
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position.xy, 0.0, 1.0);
+            }
+        `;
+        const shadowMapFragment = `
+            varying vec2 vUv;
+            uniform sampler2D shadowMap;
+            #include <packing>
+            void main() {
+                float depth = unpackRGBAToDepth( texture2D( shadowMap, vUv ) );
+                if ( depth >= 0.9999 ) {
+                    discard;
+                }
+                gl_FragColor = vec4(vec3(depth), 1.0);
+            }
+        `;
+        this.debugMaterials = {
+            lighting: new THREE.MeshLambertMaterial({ color: 0xffffff }),
+            cameraNormals: new THREE.MeshNormalMaterial({ flatShading: false }),
+            worldNormals: new THREE.ShaderMaterial({
+                vertexShader: worldNormalVertex,
+                fragmentShader: worldNormalFragment
+            }),
+            depth: new THREE.ShaderMaterial({
+                uniforms: {
+                    depthRange: { value: 150.0 },
+                    depthBias: { value: 0.0 }
+                },
+                vertexShader: depthVertex,
+                fragmentShader: depthFragment
+            }),
+            wireframe: new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true })
+        };
+        this.shadowMapScene = new THREE.Scene();
+        this.shadowMapCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        const quadGeometry = new THREE.PlaneGeometry(2, 2);
+        this.shadowMapMaterial = new THREE.ShaderMaterial({
+            uniforms: { shadowMap: { value: null } },
+            vertexShader: shadowMapVertex,
+            fragmentShader: shadowMapFragment,
+            depthWrite: false,
+            depthTest: false
+        });
+        this.shadowMapQuad = new THREE.Mesh(quadGeometry, this.shadowMapMaterial);
+        this.shadowMapScene.add(this.shadowMapQuad);
 
         // Теперь можно инициализировать системы
         this.initRenderer();
@@ -61,6 +145,7 @@ class Application {
         this.initUI();
 
         this.setupEvents();
+        this.applySettings();
 
         this.setHUDVisibility(true);
         
@@ -203,21 +288,21 @@ class Application {
     }
 
     initRenderer() {
-        const antialias = this.settings.get('antialiasing');
+        const graphics = this.activeGraphicsProfile;
         this.renderer = new THREE.WebGLRenderer({ 
-            antialias: antialias, 
+            antialias: !!graphics.nativeAA, 
             powerPreference: "high-performance",
             stencil: false,
             depth: true
         });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.settings.get('pixelRatio')));
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        this.renderer.toneMappingExposure = this.settings.get('toneMappingExposure');
+        this.renderer.toneMappingExposure = graphics.exposure;
         this.renderer.physicallyCorrectLights = true;
-        this.renderer.shadowMap.enabled = this.settings.get('shadows');
-        this.renderer.shadowMap.type = this.settings.get('softShadows') ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+        this.renderer.shadowMap.enabled = graphics.shadows;
+        this.renderer.shadowMap.type = this.getShadowMapType(graphics.shadowType);
         this.renderer.shadowMap.autoUpdate = true;
         document.body.appendChild(this.renderer.domElement);
         this.settings.applyToRenderer(this.renderer);
@@ -229,14 +314,15 @@ class Application {
     }
 
     initScene() {
+        const graphics = this.activeGraphicsProfile;
         this.scene = new THREE.Scene();
         this.scene.background = this.skyColor.clone();
         if (this.environmentTexture) {
             this.scene.environment = this.environmentTexture;
         }
 
-        const fogDist = this.settings.get('renderDistance') * WORLD_CONFIG.CHUNK_SIZE;
-        if (this.settings.get('fogEnabled')) {
+        const fogDist = graphics.renderDistance * WORLD_CONFIG.CHUNK_SIZE;
+        if (graphics.fog) {
             this.scene.fog = new THREE.Fog(this.skyColor, 20, fogDist - 10);
         }
 
@@ -249,20 +335,18 @@ class Application {
         this.settings.applyToCamera(this.camera);
 
         // 1. AMBIENT LIGHT
-        this.ambient = new THREE.AmbientLight(0xffffff, 0.1);
+        this.ambient = new THREE.AmbientLight(0xffffff, graphics.ambientIntensity);
         this.scene.add(this.ambient);
 
         // 2. HEMISPHERE LIGHT
-        this.hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x444444, 0.2);
+        this.hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x444444, graphics.hemiIntensity);
         this.scene.add(this.hemiLight);
 
         // 3. SUN LIGHT
-        this.sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        this.sun = new THREE.DirectionalLight(0xffffff, graphics.sunIntensity);
         this.sun.position.set(50, 100, 50);
-        this.sun.castShadow = true;
-
-        const shadowQuality = this.settings.get('shadowQuality');
-        const shadowMapSize = this.SHADOW_MAP_SIZES[Math.min(shadowQuality, this.SHADOW_MAP_SIZES.length - 1)] || 2048;
+        this.sun.castShadow = graphics.shadows;
+        const shadowMapSize = graphics.shadowMapSize || 2048;
         
         const d = 100; 
         this.sun.shadow.camera.left = -d;
@@ -274,13 +358,15 @@ class Application {
 
         this.sun.shadow.mapSize.width = shadowMapSize;
         this.sun.shadow.mapSize.height = shadowMapSize;
-        this.sun.shadow.bias = -0.0001;
-        this.sun.shadow.normalBias = 0.005;
+        this.sun.shadow.radius = graphics.shadowRadius || 2.0;
+        const initialShadowBias = this.computeShadowBiasValues(graphics.shadowDistance);
+        this.sun.shadow.bias = initialShadowBias.bias;
+        this.sun.shadow.normalBias = initialShadowBias.normalBias;
 
         this.scene.add(this.sun);
         this.scene.add(this.sun.target);
         this.shadowCameraPosition = new THREE.Vector3(0, 0, 0);
-        this.updateShadowRig();
+        this.updateShadowRig(graphics.shadowDistance);
 
         this.soundManager = new SoundManager(this.camera);
         this.settings.applyToSound(this.soundManager);
@@ -303,6 +389,7 @@ class Application {
         if (this.world.material && this.world.material.map) {
             this.sky = new Sky(this.scene, this.world.material.map);
             this.sky.dayTime = this.dayTime;
+            this.configureAtlasTexture(this.activeGraphicsProfile);
             
             this.inventory = new Inventory(this.scene, this.world.material.map, this.player);
             
@@ -311,7 +398,7 @@ class Application {
             }, 100);
         }
         
-        this.world.update(this.player.position);
+        this.world.update(this.player.position, 0, this.sky ? this.sky.CLOUD_HEIGHT : 200, this.settings.get('cloudCoverage'));
     }
     
     updateHotbarWithIcons() {
@@ -354,30 +441,26 @@ class Application {
     initUI() {
         this.updateSettingsUI();
         this.setupSettingsHandlers();
+        this.setupGraphicsPresetButtons();
         this.setupKeybindUI();
         this.refreshKeybindButtons();
     }
 
     setupSettingsHandlers() {
-        document.getElementById('setting-antialiasing').addEventListener('change', (e) => {
-            this.settings.set('antialiasing', e.target.checked);
-            this.applySettings();
-        });
-        document.getElementById('setting-shadows').addEventListener('change', (e) => {
-            this.settings.set('shadows', e.target.checked);
-            this.applySettings();
-        });
-        document.getElementById('setting-soft-shadows').addEventListener('change', (e) => {
-            this.settings.set('softShadows', e.target.checked);
-            this.applySettings();
-        });
-        document.getElementById('setting-fog').addEventListener('change', (e) => {
-            this.settings.set('fogEnabled', e.target.checked);
-            this.applySettings();
-        });
-        document.getElementById('setting-vsync').addEventListener('change', (e) => {
-            this.settings.set('vsync', e.target.checked);
-        });
+        const cinematicToggle = document.getElementById('setting-cinematic-effects');
+        if (cinematicToggle) {
+            cinematicToggle.addEventListener('change', (e) => {
+                this.settings.set('cinematicEffects', e.target.checked);
+                this.applySettings();
+            });
+        }
+        const shadowToggle = document.getElementById('setting-shadows');
+        if (shadowToggle) {
+            shadowToggle.addEventListener('change', (e) => {
+                this.settings.set('shadows', e.target.checked);
+                this.applySettings();
+            });
+        }
         document.getElementById('setting-sound-enabled').addEventListener('change', (e) => {
             this.settings.set('soundEnabled', e.target.checked);
             this.soundManager.setEnabled(e.target.checked);
@@ -388,11 +471,6 @@ class Application {
                 this.player.bobbingEnabled = e.target.checked;
             }
         });
-        document.getElementById('setting-shadow-quality').addEventListener('change', (e) => {
-            this.settings.set('shadowQuality', parseInt(e.target.value));
-            this.applySettings();
-        });
-
         document.getElementById('settings-apply-btn').addEventListener('click', () => {
             this.applySettings();
             this.setUIState('pause'); 
@@ -426,15 +504,10 @@ class Application {
                 this.settings.applyToSound(this.soundManager);
             } else if (settingKey === 'fov') {
                 this.settings.applyToCamera(this.camera);
-            } else if (settingKey === 'pixelRatio') {
-                this.settings.applyToRenderer(this.renderer);
-                this.updateFXAASize();
             } else if (settingKey === 'mouseSensitivity' && this.player) {
                 this.player.mouseSensitivity = value;
             } else if (settingKey === 'chunkLoadSpeed' && this.world) {
                 this.world.chunkLoadSpeed = value;
-            } else if (settingKey === 'cloudCoverage') {
-                console.log('[Settings] Cloud coverage changed to:', value.toFixed(2));
             } else if (settingKey === 'renderDistance') {
                 if (this.world && this.world.config) {
                     this.world.config.RENDER_DISTANCE = value;
@@ -443,18 +516,7 @@ class Application {
                     const fogDist = value * WORLD_CONFIG.CHUNK_SIZE;
                     this.scene.fog.far = fogDist - 10;
                 }
-            } else if (settingKey === 'toneMappingExposure') {
-                this.renderer.toneMappingExposure = value;
-            } else if (settingKey === 'sunIntensity') {
-                if (this.sun) this.sun.intensity = value;
-            } else if (settingKey === 'ambientIntensity') {
-                if (this.ambient) this.ambient.intensity = value;
-                if (this.hemiLight) this.hemiLight.intensity = value * 0.6;
-                if (this.world && typeof this.world.setAOIntensity === 'function') {
-                    this.world.setAOIntensity(value);
-                }
-            } else if (settingKey === 'shadowDistance') {
-                this.updateShadowRig();
+                this.applySettings();
             }
         });
     }
@@ -479,33 +541,76 @@ class Application {
         );
     }
 
-    updateShadowRig() {
+    getShadowMapType(type) {
+        switch (type) {
+            case 'pcf':
+                return THREE.PCFShadowMap;
+            case 'pcfsoft':
+                return THREE.PCFSoftShadowMap;
+            case 'vsm':
+                return THREE.VSMShadowMap;
+            default:
+                return THREE.PCFSoftShadowMap;
+        }
+    }
+
+    configureAtlasTexture(graphics = this.activeGraphicsProfile) {
+        if (!this.renderer || !this.world || !this.world.material || !this.world.material.map) return;
+        const atlas = this.world.material.map;
+        atlas.generateMipmaps = false;
+        atlas.minFilter = THREE.NearestFilter;
+        atlas.magFilter = THREE.NearestFilter;
+        const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
+        const targetAniso = graphics ? Math.max(1, Math.floor(graphics.pixelRatio * 4)) : 1;
+        atlas.anisotropy = Math.min(maxAniso, targetAniso);
+        atlas.wrapS = THREE.ClampToEdgeWrapping;
+        atlas.wrapT = THREE.ClampToEdgeWrapping;
+        atlas.needsUpdate = true;
+    }
+
+    computeShadowBiasValues(distanceOverride) {
+        const graphics = this.activeGraphicsProfile || this.settings.getGraphicsConfig();
+        const targetDistance = distanceOverride || graphics.shadowDistance || 140;
+        const mapSize = this.sun?.shadow?.mapSize?.x || graphics.shadowMapSize || 2048;
+        const clampedMapSize = Math.max(512, mapSize);
+        const sizeFactor = 2048 / clampedMapSize;
+        const distanceFactor = targetDistance / 140;
+        const biasBase = -0.00055;
+        const normalBiasBase = 0.05;
+        const bias = THREE.MathUtils.clamp(biasBase * sizeFactor * distanceFactor, -0.0035, -0.0001);
+        const normalBias = THREE.MathUtils.clamp(normalBiasBase * distanceFactor, 0.02, 0.12);
+        return { bias, normalBias };
+    }
+
+    updateShadowRig(distanceOverride) {
         if (!this.sun || !this.sun.shadow) return;
-        const shadowRange = this.settings.get('shadowDistance') || 140;
+        const graphics = this.activeGraphicsProfile || this.settings.getGraphicsConfig();
+        const shadowRange = distanceOverride || graphics.shadowDistance || 140;
         this.sun.shadow.camera.left = -shadowRange;
         this.sun.shadow.camera.right = shadowRange;
         this.sun.shadow.camera.top = shadowRange;
         this.sun.shadow.camera.bottom = -shadowRange;
         this.sun.shadow.camera.near = 0.5;
         this.sun.shadow.camera.far = shadowRange * 3;
-        this.sun.shadow.radius = this.settings.get('softShadows') ? 2.5 : 0.5;
-        this.sun.shadow.bias = -0.00008;
-        this.sun.shadow.normalBias = 0.02;
+        this.sun.shadow.radius = graphics.shadowRadius ?? this.sun.shadow.radius;
+        const { bias, normalBias } = this.computeShadowBiasValues(distanceOverride);
+        this.sun.shadow.bias = bias;
+        this.sun.shadow.normalBias = normalBias;
         this.sun.shadow.camera.updateProjectionMatrix();
     }
 
+
     updateSettingsUI() {
-        document.getElementById('setting-antialiasing').checked = this.settings.get('antialiasing');
-        document.getElementById('setting-shadows').checked = this.settings.get('shadows');
-        document.getElementById('setting-fog').checked = this.settings.get('fogEnabled');
-        document.getElementById('setting-vsync').checked = this.settings.get('vsync');
-        document.getElementById('setting-sound-enabled').checked = this.settings.get('soundEnabled');
-        document.getElementById('setting-bobbing').checked = this.settings.get('bobbing');
-        document.getElementById('setting-shadow-quality').value = this.settings.get('shadowQuality');
-        document.getElementById('setting-soft-shadows').checked = this.settings.get('softShadows');
+        const cinematicToggle = document.getElementById('setting-cinematic-effects');
+        if (cinematicToggle) cinematicToggle.checked = this.settings.get('cinematicEffects');
+        const shadowToggle = document.getElementById('setting-shadows');
+        if (shadowToggle) shadowToggle.checked = this.settings.get('shadows');
+        const soundToggle = document.getElementById('setting-sound-enabled');
+        if (soundToggle) soundToggle.checked = this.settings.get('soundEnabled');
+        const bobbingToggle = document.getElementById('setting-bobbing');
+        if (bobbingToggle) bobbingToggle.checked = this.settings.get('bobbing');
         
         this.setupSlider('setting-render-distance', 'renderDistance', 'render-distance-value', (v) => Math.round(v));
-        this.setupSlider('setting-pixel-ratio', 'pixelRatio', 'pixel-ratio-value', (v) => v);
         this.setupSlider('setting-master-volume', 'masterVolume', 'master-volume-value', (v) => Math.round(v * 100));
         this.setupSlider('setting-sfx-volume', 'soundEffectsVolume', 'sfx-volume-value', (v) => Math.round(v * 100));
         this.setupSlider('setting-music-volume', 'musicVolume', 'music-volume-value', (v) => Math.round(v * 100));
@@ -515,10 +620,72 @@ class Application {
         this.setupSlider('setting-max-fps', 'maxFPS', 'max-fps-value', (v) => v || '∞');
         this.setupSlider('setting-chunk-load-speed', 'chunkLoadSpeed', 'chunk-load-speed-value', (v) => v);
         this.setupSlider('setting-cloud-coverage', 'cloudCoverage', 'cloud-coverage-value', (v) => Math.round(v * 100) + '%');
-        this.setupSlider('setting-tone-mapping', 'toneMappingExposure', 'tone-mapping-value', (v) => v.toFixed(2));
-        this.setupSlider('setting-shadow-distance', 'shadowDistance', 'shadow-distance-value', (v) => Math.round(v));
-        this.setupSlider('setting-sun-intensity', 'sunIntensity', 'sun-intensity-value', (v) => v.toFixed(2));
-        this.setupSlider('setting-ambient-intensity', 'ambientIntensity', 'ambient-intensity-value', (v) => v.toFixed(2));
+        
+        this.highlightPresetButton();
+    }
+
+    applyDebugView() {
+        const mode = this.debugViews[this.debugViewIndex] || 'none';
+        const statusEl = document.getElementById('status-text');
+        if (statusEl) {
+            statusEl.textContent = `DEBUG: ${mode.toUpperCase()}`;
+        }
+        switch (mode) {
+            case 'lighting':
+                this.scene.overrideMaterial = this.debugMaterials.lighting;
+                break;
+            case 'cameraNormals':
+                this.scene.overrideMaterial = this.debugMaterials.cameraNormals;
+                break;
+            case 'worldNormals':
+                this.scene.overrideMaterial = this.debugMaterials.worldNormals;
+                break;
+            case 'depth':
+                const range = Math.max(20, (this.activeGraphicsProfile?.shadowDistance || 140) * 1.5);
+                this.debugMaterials.depth.uniforms.depthRange.value = range;
+                this.debugMaterials.depth.uniforms.depthBias.value = this.camera.near;
+                this.scene.overrideMaterial = this.debugMaterials.depth;
+                break;
+            case 'shadowMap':
+                this.scene.overrideMaterial = null;
+                break;
+            case 'wireframe':
+                this.scene.overrideMaterial = this.debugMaterials.wireframe;
+                break;
+            default:
+                this.scene.overrideMaterial = null;
+        }
+        console.log(`[Debug] View: ${mode}`);
+    }
+
+    cycleDebugView(direction = 1) {
+        const count = this.debugViews.length;
+        this.debugViewIndex = (this.debugViewIndex + direction + count) % count;
+        this.applyDebugView();
+    }
+
+    setupGraphicsPresetButtons() {
+        const buttons = document.querySelectorAll('[data-graphics-preset]');
+        this.graphicsPresetButtons = buttons;
+        buttons.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const preset = btn.dataset.graphicsPreset;
+                if (!preset) return;
+                this.settings.applyGraphicsPreset(preset);
+                this.activeGraphicsProfile = this.settings.getGraphicsConfig();
+                this.updateSettingsUI();
+                this.applySettings();
+            });
+        });
+        this.highlightPresetButton();
+    }
+
+    highlightPresetButton() {
+        if (!this.graphicsPresetButtons) return;
+        const current = this.settings.getGraphicsPresetName();
+        this.graphicsPresetButtons.forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.graphicsPreset === current);
+        });
     }
 
     setupKeybindUI() {
@@ -614,22 +781,27 @@ class Application {
     }
 
     applySettings() {
-        const antialias = this.settings.get('antialiasing');
-        this.renderer.shadowMap.enabled = this.settings.get('shadows');
-        this.sun.castShadow = this.settings.get('shadows');
-        this.renderer.shadowMap.type = this.settings.get('softShadows') ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
-        this.renderer.toneMappingExposure = this.settings.get('toneMappingExposure');
-        
-        if (this.settings.get('shadows')) {
-            const shadowQuality = this.settings.get('shadowQuality');
-            const shadowMapSize = this.SHADOW_MAP_SIZES[Math.min(shadowQuality, this.SHADOW_MAP_SIZES.length - 1)] || 2048;
-            this.sun.shadow.mapSize.width = shadowMapSize;
-            this.sun.shadow.mapSize.height = shadowMapSize;
+        this.activeGraphicsProfile = this.settings.getGraphicsConfig();
+        const graphics = this.activeGraphicsProfile;
+        if (this.renderer) {
+            this.renderer.shadowMap.enabled = graphics.shadows;
+            this.renderer.shadowMap.type = this.getShadowMapType(graphics.shadowType);
+            this.renderer.toneMappingExposure = graphics.exposure;
+            this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
+            if (this.composer) {
+                this.composer.setPixelRatio(this.renderer.getPixelRatio());
+            }
+        }
+        if (this.sun) {
+            this.sun.castShadow = graphics.shadows;
+            this.sun.intensity = graphics.sunIntensity;
+            this.sun.shadow.mapSize.set(graphics.shadowMapSize || 2048, graphics.shadowMapSize || 2048);
+            this.sun.shadow.radius = graphics.shadowRadius ?? this.sun.shadow.radius;
             this.renderer.shadowMap.needsUpdate = true;
         }
 
-        if (this.settings.get('fogEnabled')) {
-            const fogDist = this.settings.get('renderDistance') * WORLD_CONFIG.CHUNK_SIZE;
+        if (graphics.fog) {
+            const fogDist = graphics.renderDistance * WORLD_CONFIG.CHUNK_SIZE;
             if (!this.scene.fog) {
                 this.scene.fog = new THREE.Fog(this.skyColor, 20, fogDist - 10);
             } else {
@@ -639,21 +811,22 @@ class Application {
             this.scene.fog = null;
         }
 
+        if (this.ambient) this.ambient.intensity = graphics.ambientIntensity;
+        if (this.hemiLight) this.hemiLight.intensity = graphics.hemiIntensity;
+
         this.settings.applyToRenderer(this.renderer);
         this.settings.applyToCamera(this.camera);
         this.settings.applyToWorld(this.world);
         this.settings.applyToSound(this.soundManager);
         this.updateFXAASize();
-        
-        if (this.sun) this.sun.intensity = this.settings.get('sunIntensity');
-        if (this.ambient) this.ambient.intensity = this.settings.get('ambientIntensity');
-        if (this.hemiLight) this.hemiLight.intensity = this.settings.get('ambientIntensity') * 0.6;
-        this.updateShadowRig();
+        this.configureAtlasTexture(graphics);
+        this.updateShadowRig(graphics.shadowDistance);
 
         if (this.world && this.world.config) {
             this.world.config.RENDER_DISTANCE = this.settings.get('renderDistance');
         }
     }
+
 
     setupEvents() {
         window.addEventListener('resize', () => {
@@ -693,6 +866,28 @@ class Application {
         // --- КЛАВИАТУРА ---
         document.addEventListener('keydown', (e) => {
             if (this.isCapturingKeybind()) return;
+            if (e.code === 'BracketRight') {
+                e.preventDefault();
+                this.cycleDebugView(1);
+                return;
+            }
+            if (e.code === 'BracketLeft') {
+                e.preventDefault();
+                this.cycleDebugView(-1);
+                return;
+            }
+            if (e.code === 'Comma') {
+                e.preventDefault();
+                this.debugAmbientEnabled = !this.debugAmbientEnabled;
+                console.log(`[Debug] Ambient influence: ${this.debugAmbientEnabled ? 'on' : 'off'}`);
+                return;
+            }
+            if (e.code === 'Period') {
+                e.preventDefault();
+                this.debugCloudLightingEnabled = !this.debugCloudLightingEnabled;
+                console.log(`[Debug] Cloud lighting factor: ${this.debugCloudLightingEnabled ? 'on' : 'off'}`);
+                return;
+            }
             // 1. ESC
             if (e.key === 'Escape') {
                 e.preventDefault(); 
@@ -839,8 +1034,8 @@ class Application {
             
             if (this.sun) {
                 const baseSunIntensity = this.sky.getLightIntensity();
-                const cloudShadowFactor = this.sky.getCloudShadowFactor();
-                this.sun.intensity = baseSunIntensity * cloudShadowFactor;
+                const cloudLightFactor = this.debugCloudLightingEnabled ? this.sky.getCloudShadowFactor() : 1.0;
+                this.sun.intensity = Math.max(0.2, baseSunIntensity * cloudLightFactor);
                 
                 const sunAngle = (this.dayTime - 0.25) * Math.PI * 2.0;
                 const sunX = Math.cos(sunAngle) * this.SUN_RADIUS;
@@ -868,12 +1063,14 @@ class Application {
             if (this.ambient) {
                 const baseAmbient = this.sky.getAmbientIntensity();
                 const cloudFactor = this.sky.getCloudShadowFactor();
-                this.ambient.intensity = baseAmbient * (0.2 + cloudFactor * 0.8);
+                const ambientMod = this.debugAmbientEnabled ? (0.2 + cloudFactor * 0.8) : 1.0;
+                this.ambient.intensity = baseAmbient * ambientMod;
             }
             if (this.hemiLight) {
                 const baseHemi = this.sky.getHemisphereIntensity();
                 const cloudFactor = this.sky.getCloudShadowFactor();
-                this.hemiLight.intensity = baseHemi * cloudFactor;
+                const hemiMod = this.debugAmbientEnabled ? cloudFactor : 1.0;
+                this.hemiLight.intensity = baseHemi * hemiMod;
             }
         }
         
@@ -893,12 +1090,21 @@ class Application {
                     const cloudCoverage = this.settings.get('cloudCoverage');
                     this.world.update(this.player.position, time, this.sky.CLOUD_HEIGHT, cloudCoverage);
                 } else if (this.world && this.player.position) {
-                    this.world.update(this.player.position);
+                    this.world.update(this.player.position, 0, this.sky ? this.sky.CLOUD_HEIGHT : 200, this.settings.get('cloudCoverage'));
                 }
             }
         }
 
-        if (this.postProcessingEnabled && this.composer) {
+        const currentDebugMode = this.debugViews[this.debugViewIndex];
+        if (currentDebugMode === 'shadowMap') {
+            const shadowTexture = this.sun?.shadow?.map?.texture;
+            if (shadowTexture) {
+                this.shadowMapMaterial.uniforms.shadowMap.value = shadowTexture;
+                this.renderer.render(this.shadowMapScene, this.shadowMapCamera);
+            } else {
+                this.renderer.render(this.scene, this.camera);
+            }
+        } else if (this.postProcessingEnabled && this.composer) {
             this.composer.render();
         } else {
             this.renderer.render(this.scene, this.camera);

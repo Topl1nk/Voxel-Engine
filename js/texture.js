@@ -15,11 +15,14 @@ export class TextureGen {
             }
         );
 
-        // Настройки для Pixel Art (чтобы не было мыла)
+        texture.generateMipmaps = false;
         texture.magFilter = THREE.NearestFilter;
         texture.minFilter = THREE.NearestFilter;
         texture.colorSpace = THREE.SRGBColorSpace;
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
         texture.anisotropy = 0;
+        texture.needsUpdate = true;
 
         return texture;
     }

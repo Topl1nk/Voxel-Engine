@@ -84,96 +84,43 @@
                 <!-- Графика -->
                 <div class="settings-section">
                     <h3>Графика</h3>
-                    
+
+                    <div class="preset-grid">
+                        <button class="preset-card" data-graphics-preset="performance">
+                            <span class="preset-badge">FPS</span>
+                            <span class="preset-title">Производительность</span>
+                            <span class="preset-desc">Ровное освещение и максимум кадров</span>
+                        </button>
+                        <button class="preset-card" data-graphics-preset="balanced">
+                            <span class="preset-badge">BAL</span>
+                            <span class="preset-title">Сбалансировано</span>
+                            <span class="preset-desc">Комфортный свет и мягкие тени</span>
+                        </button>
+                        <button class="preset-card" data-graphics-preset="cinematic">
+                            <span class="preset-badge">HDR</span>
+                            <span class="preset-title">Кино</span>
+                            <span class="preset-desc">Чуть глубже цвета, мягкий постпроцесс</span>
+                        </button>
+                    </div>
+
                     <div class="setting-item">
                         <label>
-                            <span>Сглаживание (Antialiasing)</span>
-                            <input type="checkbox" id="setting-antialiasing" class="setting-checkbox">
+                            <span>Кинематографические эффекты</span>
+                            <input type="checkbox" id="setting-cinematic-effects" class="setting-checkbox">
                         </label>
                     </div>
-                    
+
                     <div class="setting-item">
                         <label>
                             <span>Тени</span>
                             <input type="checkbox" id="setting-shadows" class="setting-checkbox">
                         </label>
                     </div>
-                    
-                    <div class="setting-item">
-                        <label>
-                            <span>Качество теней</span>
-                            <select id="setting-shadow-quality" class="setting-select">
-                                <option value="0">Низкое</option>
-                                <option value="1">Среднее</option>
-                                <option value="2" selected>Высокое</option>
-                            </select>
-                        </label>
-                    </div>
-                    
-                    <div class="setting-item">
-                        <label>
-                            <span>Дальность прорисовки: <span id="render-distance-value">6</span></span>
-                            <input type="range" id="setting-render-distance" class="setting-slider" min="3" max="12" value="6" step="1">
-                        </label>
-                    </div>
-                    
-                    <div class="setting-item">
-                        <label>
-                            <span>Туман</span>
-                            <input type="checkbox" id="setting-fog" class="setting-checkbox">
-                        </label>
-                    </div>
-                    
-                    <div class="setting-item">
-                        <label>
-                            <span>VSync</span>
-                            <input type="checkbox" id="setting-vsync" class="setting-checkbox">
-                        </label>
-                    </div>
-                    
-                    <div class="setting-item">
-                        <label>
-                            <span>Pixel Ratio: <span id="pixel-ratio-value">2</span></span>
-                            <input type="range" id="setting-pixel-ratio" class="setting-slider" min="1" max="3" value="2" step="1">
-                        </label>
-                    </div>
 
                     <div class="setting-item">
                         <label>
-                            <span>Экспозиция: <span id="tone-mapping-value">1.10</span></span>
-                            <input type="range" id="setting-tone-mapping" class="setting-slider" min="0.5" max="2.0" value="1.1" step="0.05">
-                        </label>
-                    </div>
-
-                    <div class="setting-item">
-                        <label>
-                            <span>Дистанция теней: <span id="shadow-distance-value">140</span></span>
-                            <input type="range" id="setting-shadow-distance" class="setting-slider" min="40" max="240" value="140" step="10">
-                        </label>
-                    </div>
-
-                    <div class="setting-item">
-                        <label>
-                            <span>Мягкие тени</span>
-                            <input type="checkbox" id="setting-soft-shadows" class="setting-checkbox" checked>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="settings-section">
-                    <h3>Освещение</h3>
-
-                    <div class="setting-item">
-                        <label>
-                            <span>Яркость солнца: <span id="sun-intensity-value">1.35</span></span>
-                            <input type="range" id="setting-sun-intensity" class="setting-slider" min="0.5" max="2.5" value="1.35" step="0.05">
-                        </label>
-                    </div>
-
-                    <div class="setting-item">
-                        <label>
-                            <span>Окружающий свет: <span id="ambient-intensity-value">0.32</span></span>
-                            <input type="range" id="setting-ambient-intensity" class="setting-slider" min="0.1" max="1.0" value="0.32" step="0.02">
+                            <span>Дальность прорисовки: <span id="render-distance-value">7</span></span>
+                            <input type="range" id="setting-render-distance" class="setting-slider" min="4" max="12" value="7" step="1">
                         </label>
                     </div>
                 </div>

@@ -61,17 +61,17 @@ export const BLOCK_DATA = [
     },
     { 
         id: 12, name: 'Log', 
-        atlas: [8, 1], 
-        atlasTop: [8, 0], 
-        atlasBottom: [8, 0], 
+        atlas: [4, 1], 
+        atlasTop: [5, 1], 
+        atlasBottom: [5, 1], 
         transparent: false, 
         solid: true, 
         sound: { step: 'wood_step', break: 'wood_break', place: 'wood_place' }
     },
     { 
         id: 13, name: 'Leaves', 
-        atlas: [9, 1], 
-        transparent: true, 
+        atlas: [6, 1], 
+        transparent: false, 
         solid: true, 
         sound: { step: 'grass_step', break: 'grass_break', place: 'grass_place' }
     },

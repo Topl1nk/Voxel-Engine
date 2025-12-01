@@ -1,3 +1,57 @@
+export const GRAPHICS_PRESETS = {
+    performance: {
+        label: 'Производительность',
+        pixelRatio: 1.0,
+        exposure: 1.0,
+        renderDistance: 6,
+        sunIntensity: 1.15,
+        ambientIntensity: 0.24,
+        hemiIntensity: 0.16,
+        shadowMapSize: 1024,
+        shadowDistance: 100,
+        shadowType: 'pcf',
+        shadowRadius: 1.0,
+        fog: true,
+        reflectionStrength: 0.03,
+        aoIntensity: 0.26,
+        nativeAA: false
+    },
+    balanced: {
+        label: 'Сбалансировано',
+        pixelRatio: 1.25,
+        exposure: 1.02,
+        renderDistance: 7,
+        sunIntensity: 1.25,
+        ambientIntensity: 0.28,
+        hemiIntensity: 0.2,
+        shadowMapSize: 2048,
+        shadowDistance: 140,
+        shadowType: 'pcfsoft',
+        shadowRadius: 2.0,
+        fog: true,
+        reflectionStrength: 0.05,
+        aoIntensity: 0.32,
+        nativeAA: false
+    },
+    cinematic: {
+        label: 'Кино',
+        pixelRatio: 1.4,
+        exposure: 1.05,
+        renderDistance: 8,
+        sunIntensity: 1.55,
+        ambientIntensity: 0.24,
+        hemiIntensity: 0.18,
+        shadowMapSize: 3072,
+        shadowDistance: 170,
+        shadowType: 'pcfsoft',
+        shadowRadius: 1.6,
+        fog: true,
+        reflectionStrength: 0.1,
+        aoIntensity: 0.3,
+        nativeAA: true
+    }
+};
+
 // Система настроек игры
 export class SettingsManager {
     constructor() {
@@ -13,20 +67,13 @@ export class SettingsManager {
             toggleHUD: 'KeyP'
         };
 
+        const defaultPreset = 'balanced';
+
         this.settings = {
-            // Графика
-            antialiasing: false,
+            graphicsPreset: defaultPreset,
+            cinematicEffects: true,
             shadows: true,
-            shadowQuality: 2, // 0 = low, 1 = medium, 2 = high
-            renderDistance: 6,
-            fogEnabled: true,
-            vsync: false,
-            pixelRatio: 2,
-            toneMappingExposure: 1.1,
-            sunIntensity: 1.35,
-            ambientIntensity: 0.32,
-            shadowDistance: 140,
-            softShadows: true,
+            renderDistance: GRAPHICS_PRESETS[defaultPreset].renderDistance,
             
             // Звук
             masterVolume: 1.0,
@@ -40,13 +87,13 @@ export class SettingsManager {
             bobbing: true,
             
             // Время
-            timeSpeed: 1.0, // Скорость времени (1.0 = нормальная)
+            timeSpeed: 1.0,
             
-            // Облака
-            cloudCoverage: 0.20, // Покрытие облаками (0.0 - 1.0)
+            // Атмосфера
+            cloudCoverage: 0.20,
             
             // Производительность
-            maxFPS: 0, // 0 = unlimited
+            maxFPS: 0,
             chunkLoadSpeed: 2,
 
             // Клавиши
@@ -92,6 +139,27 @@ export class SettingsManager {
         this.saveSettings();
     }
 
+    applyGraphicsPreset(preset) {
+        if (!GRAPHICS_PRESETS[preset]) return;
+        this.settings.graphicsPreset = preset;
+        this.settings.renderDistance = GRAPHICS_PRESETS[preset].renderDistance;
+        this.saveSettings();
+    }
+
+    getGraphicsPresetName() {
+        return GRAPHICS_PRESETS[this.settings.graphicsPreset] ? this.settings.graphicsPreset : 'balanced';
+    }
+
+    getGraphicsConfig() {
+        const preset = GRAPHICS_PRESETS[this.getGraphicsPresetName()] || GRAPHICS_PRESETS.balanced;
+        return {
+            ...preset,
+            renderDistance: this.settings.renderDistance,
+            cinematicEffects: this.settings.cinematicEffects !== false,
+            shadows: this.settings.shadows !== false
+        };
+    }
+
     getKeyBindings() {
         return { ...this.settings.keyBindings };
     }
@@ -111,7 +179,9 @@ export class SettingsManager {
     }
 
     applyToRenderer(renderer) {
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.get('pixelRatio')));
+        if (!renderer) return;
+        const graphics = this.getGraphicsConfig();
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.pixelRatio));
     }
 
     applyToCamera(camera) {
@@ -133,8 +203,9 @@ export class SettingsManager {
                     world.material.userData.shader.uniforms.uCloudCoverage.value = this.get('cloudCoverage');
                 }
             }
+            const graphics = this.getGraphicsConfig();
             if (typeof world.setAOIntensity === 'function') {
-                world.setAOIntensity(this.get('ambientIntensity'));
+                world.setAOIntensity(graphics.aoIntensity);
             }
         }
     }

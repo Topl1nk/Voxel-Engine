@@ -126,10 +126,38 @@ export const VoxelShader = {
             return cloudShadow;
         }
         
-        float getShadow(sampler2D shadowMap, vec4 shadowCoord) {
+        const vec2 poissonDisk[16] = vec2[](
+            vec2(-0.94201624, -0.39906216),
+            vec2(0.94558609, -0.76890725),
+            vec2(-0.094184101, -0.92938870),
+            vec2(0.34495938, 0.29387760),
+            vec2(-0.91588581, 0.45771432),
+            vec2(-0.81544232, -0.87912464),
+            vec2(-0.38277543, 0.27676845),
+            vec2(0.97484398, 0.75648379),
+            vec2(0.44323325, -0.97511554),
+            vec2(0.53742981, -0.47373420),
+            vec2(-0.26496911, -0.41893023),
+            vec2(0.79197514, 0.19090188),
+            vec2(-0.24188840, 0.99706507),
+            vec2(-0.81409955, 0.91437590),
+            vec2(0.19984126, 0.78641367),
+            vec2(0.14383161, -0.14100790)
+        );
+        
+        float randomFloat(vec3 seed) {
+            return fract(sin(dot(seed, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        }
+        
+        float getShadow(sampler2D shadowMap, vec4 shadowCoord, float bias, float pcfRadius, float randomSeed) {
             if (!uShadowsEnabled) return 1.0;
             
             vec3 shadowCoord3 = shadowCoord.xyz / shadowCoord.w;
+            
+            // За пределами объема освещения считаем точку освещенной
+            if (shadowCoord3.z > 1.0) {
+                return 1.0;
+            }
             
             // Clamp to shadow map bounds
             if (shadowCoord3.x < 0.0 || shadowCoord3.x > 1.0 ||
@@ -139,17 +167,17 @@ export const VoxelShader = {
             }
             
             float shadow = 0.0;
-            float bias = 0.0001;
             
             // PCF (Percentage Closer Filtering) для мягких теней
             vec2 texelSize = vec2(1.0 / 2048.0); // Размер shadow map
-            for(int x = -1; x <= 1; ++x) {
-                for(int y = -1; y <= 1; ++y) {
-                    vec2 offset = vec2(float(x), float(y)) * texelSize;
-                    shadow += texture2DCompare(directionalShadowMap, shadowCoord3.xy + offset, shadowCoord3.z - bias);
-                }
+            float samples = 8.0;
+            int startIndex = int(randomSeed * 16.0) % 16;
+            for (int i = 0; i < 8; ++i) {
+                int idx = (startIndex + i) % 16;
+                vec2 offset = poissonDisk[idx] * texelSize * pcfRadius;
+                shadow += texture2DCompare(shadowMap, shadowCoord3.xy + offset, shadowCoord3.z - bias);
             }
-            shadow /= 9.0;
+            shadow /= samples;
             
             return shadow;
         }
@@ -168,7 +196,14 @@ export const VoxelShader = {
             float directLight = NdotL * 0.5; // Сила солнца
             
             // 2. Тени от геометрии
-            float geometryShadow = getShadow(directionalShadowMap, vShadowCoord);
+            float ndotl = clamp(dot(vNormal, uSunDir), 0.0, 1.0);
+            float slopeFactor = ndotl < 0.999 ? sqrt(max(1.0 - ndotl * ndotl, 0.0)) / max(ndotl, 0.001) : 0.0;
+            float shadowBias = clamp(0.0005 + slopeFactor * 0.0035, 0.0005, 0.02);
+            
+            float distanceFactor = clamp(vDist / 120.0, 0.0, 1.0);
+            float pcfRadius = mix(1.0, 3.75, distanceFactor);
+            float randomSeed = randomFloat(vWorldPosition + vec3(uTime));
+            float geometryShadow = getShadow(directionalShadowMap, vShadowCoord, shadowBias, pcfRadius, randomSeed);
             
             // 3. Тени от облаков
             float cloudShadow = getCloudShadow(vWorldPosition);

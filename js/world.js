@@ -15,12 +15,14 @@ export class World {
 
         this.material = new THREE.MeshStandardMaterial({
             map: texture, // Сюда встанет картинка
-            side: THREE.DoubleSide,
+            side: THREE.FrontSide,
             alphaTest: 0.1,
-            transparent: true,
+            transparent: false,
+            depthWrite: true,
             roughness: 1.0,
             metalness: 0.0,
-            vertexColors: true
+            vertexColors: true,
+            shadowSide: THREE.FrontSide
         });
         
         // Добавляем кастомные uniforms для теней от облаков
@@ -92,25 +94,7 @@ export class World {
                 }
                 
                 float getCloudShadow(vec3 worldPos) {
-                    if (worldPos.y > uCloudHeight) return 1.0;
-                    
-                    vec3 wind_dir = vec3(0.0, 0.0, -uTime * 0.2);
-                    vec3 cloudPos = worldPos;
-                    cloudPos.y = uCloudHeight + 30.0;
-                    
-                    vec3 p = cloudPos * 0.003 + wind_dir;
-                    
-                    float dens = abs(noise_simple(p * 2.032));
-                    dens += abs(noise_simple(p * 2.032 * 2.6434)) * 0.5;
-                    dens /= 1.5;
-                    
-                    // Используем настраиваемое покрытие
-                    dens = smoothstep(uCloudCoverage, uCloudCoverage + 0.1, dens);
-                    
-                    // Фиксированная интенсивность теней 60%
-                    float cloudShadow = 1.0 - (dens * 0.6);
-                    
-                    return cloudShadow;
+                    return 1.0;
                 }
                 `
             );
@@ -130,10 +114,7 @@ export class World {
                 '#include <lights_fragment_begin>',
                 `#include <lights_fragment_begin>
                 
-                // Применяем тени от облаков к direct light
                 float cloudShadow = getCloudShadow(vWorldPosition);
-                reflectedLight.directDiffuse *= cloudShadow;
-                reflectedLight.directSpecular *= cloudShadow;
                 `
             );
             
@@ -143,7 +124,7 @@ export class World {
                 `#include <lights_fragment_end>
                 
                 // Уменьшаем ambient свет для более контрастных теней
-                reflectedLight.indirectDiffuse *= 0.3;
+                reflectedLight.indirectDiffuse *= 0.85;
                 `
             );
         };
@@ -229,12 +210,11 @@ export class World {
         }
     }
 
-    update(playerPos, time = 0, cloudHeight = 200, cloudCoverage = 0.20) {
+    update(playerPos, time = 0, cloudHeight = 200, cloudCoverage = 0.20, sunDir = null) {
         // Обновляем uniforms для теней от облаков
         if (this.material.userData.shader) {
             this.material.userData.shader.uniforms.uTime.value = time;
             this.material.userData.shader.uniforms.uCloudHeight.value = cloudHeight;
-            // ИНВЕРТИРУЕМ для соответствия с небом
             this.material.userData.shader.uniforms.uCloudCoverage.value = 1.0 - cloudCoverage;
         }
         
