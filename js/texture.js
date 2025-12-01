@@ -7,10 +7,12 @@ export class TextureGen {
         // Укажите правильный путь к вашему файлу
         const texture = loader.load(
             './assets/atlas.png',
-            undefined, // onLoad
+            () => {
+                texture.needsUpdate = true;
+                console.info('[TextureGen] Атлас успешно загружен');
+            },
             undefined, // onProgress
             (error) => {
-                // Исправлено: добавлена обработка ошибок загрузки текстуры
                 console.error('Не удалось загрузить текстуру атласа:', error);
             }
         );
@@ -22,8 +24,6 @@ export class TextureGen {
         texture.wrapS = THREE.ClampToEdgeWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
         texture.anisotropy = 0;
-        texture.needsUpdate = true;
-
         return texture;
     }
 }

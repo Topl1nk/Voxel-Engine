@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import { WORLD_CONFIG, BLOCK, BLOCKS } from './constants.js';
 import { getTerrainHeight } from './noise.js';
 
-const { CHUNK_SIZE, CHUNK_HEIGHT, ATLAS_GRID } = WORLD_CONFIG;
+const { CHUNK_SIZE, CHUNK_HEIGHT } = WORLD_CONFIG;
+const warnedTileMissing = new Set();
+const warnedTileMismatch = new Set();
+const loggedStats = new Set();
 
-// ШАГ СЕТКИ: 1 / 16 = 0.0625
-const UV_STEP = 1 / ATLAS_GRID;
-const EPS = 0.0001; // Маленький отступ, чтобы убрать швы между тайлами
 
 export class Chunk {
     constructor(chunkX, chunkZ, material, world) {
@@ -55,9 +55,35 @@ export class Chunk {
         const globalZ = this.chunkZ * CHUNK_SIZE + z;
 
         // world.getBlock сам найдет нужный чанк и спросит у него
-        const id = this.world.getBlock(globalX, y, globalZ);
+        const id = this.world ? this.world.getBlock(globalX, y, globalZ) : BLOCK.AIR;
         // Исправлено: добавлена проверка на существование блока в BLOCKS
         return id !== BLOCK.AIR && BLOCKS[id] && !BLOCKS[id].transparent;
+    }
+
+    _getBlockIdWithNeighbors(x, y, z) {
+        if (y < 0 || y >= CHUNK_HEIGHT) return BLOCK.AIR;
+        if (x >= 0 && x < CHUNK_SIZE && z >= 0 && z < CHUNK_SIZE) {
+            return this.data[this._getIndex(x, y, z)];
+        }
+        if (!this.world) return BLOCK.AIR;
+        const globalX = this.chunkX * CHUNK_SIZE + x;
+        const globalZ = this.chunkZ * CHUNK_SIZE + z;
+        return this.world.getBlock(globalX, y, globalZ);
+    }
+
+    _getFaceTile(blockProps, face) {
+        if (!blockProps) return null;
+        if (face === 'top' && blockProps.atlasTop) return blockProps.atlasTop;
+        if (face === 'bottom' && blockProps.atlasBottom) return blockProps.atlasBottom;
+        return blockProps.atlas || null;
+    }
+
+    _shouldRenderFace(currentId, neighborId) {
+        if (currentId === BLOCK.AIR) return false;
+        const block = BLOCKS[currentId];
+        if (!block) return false;
+        const neighbor = BLOCKS[neighborId];
+        return !neighbor || neighbor.transparent;
     }
 
     setBlock(x, y, z, id) {
@@ -96,152 +122,319 @@ export class Chunk {
         const uvs = [];
         const colors = [];
         const indices = [];
-
-        const pushUV = (col, row) => {
-            const uMin = col * UV_STEP + EPS;
-            const uMax = (col + 1) * UV_STEP - EPS;
-            const vMin = 1.0 - ((row + 1) * UV_STEP) + EPS;
-            const vMax = 1.0 - (row * UV_STEP) - EPS;
-            uvs.push(uMin, vMin, uMax, vMin, uMax, vMax, uMin, vMax);
-        };
-
-        const calculateAO = (side1, side2, corner) => {
-            let occlusion = 0;
-            if (side1) occlusion++;
-            if (side2) occlusion++;
-            if (corner) occlusion++;
-            if (side1 && side2) occlusion = 3;
-            switch(occlusion) {
-                case 0: return 1.0;
-                case 1: return 0.85;
-                case 2: return 0.70;
-                case 3: return 0.55;
-                default: return 1.0;
-            }
-        };
-
-        const pushColor = (c1, c2, c3, c4) => {
-            colors.push(c1, c1, c1,  c2, c2, c2,  c3, c3, c3,  c4, c4, c4);
-        };
+        const tileIndices = [];
 
         let indexOffset = 0;
 
-        for (let y = 0; y < CHUNK_HEIGHT; y++) {
-            for (let z = 0; z < CHUNK_SIZE; z++) {
-                for (let x = 0; x < CHUNK_SIZE; x++) {
-                    const id = this.data[this._getIndex(x, y, z)];
-                    if (id === BLOCK.AIR) continue;
+        const pushIndices = () => {
+            indices.push(indexOffset, indexOffset + 1, indexOffset + 2, indexOffset, indexOffset + 2, indexOffset + 3);
+            indexOffset += 4;
+        };
 
-                    const blockProps = BLOCKS[id];
-                    if (!blockProps) continue;
+        const pushColor = (shade) => {
+            const c = shade;
+            for (let i = 0; i < 4; i++) {
+                colors.push(c, c, c);
+            }
+        };
 
-                    // Базовые координаты (для боков)
-                    // Используем .atlas (как договорились в constants.js)
-                    // Если у вас там .uv, поменяйте здесь на .uv
-                    let col = blockProps.atlas[0];
-                    let row = blockProps.atlas[1];
+        const pushPlaceholderUV = () => {
+            for (let i = 0; i < 4; i++) {
+                uvs.push(0, 0);
+            }
+        };
 
-                    const isSolid = (dx, dy, dz) => this.isSolid(x + dx, y + dy, z + dz);
+        const pushTileIndex = (tile) => {
+            for (let i = 0; i < 4; i++) {
+                tileIndices.push(tile[0], tile[1]);
+            }
+        };
 
-                    // --- TOP FACE (+Y) ---
-                    if (this.isTransparent(x, y + 1, z)) {
-                        positions.push(x, y + 1, z + 1,  x + 1, y + 1, z + 1,  x + 1, y + 1, z,  x, y + 1, z);
-                        normals.push(0, 1, 0,  0, 1, 0,  0, 1, 0,  0, 1, 0);
+        const appendQuad = (vertexList, normal, tile, shade) => {
+            for (const v of vertexList) {
+                positions.push(v[0], v[1], v[2]);
+            }
+            for (let i = 0; i < 4; i++) {
+                normals.push(normal[0], normal[1], normal[2]);
+            }
+            pushPlaceholderUV();
+            pushTileIndex(tile);
+            pushColor(shade);
+            pushIndices();
+        };
 
-                        // ЛОГИКА ТЕКСТУР:
-                        // Если в конфиге есть atlasTop, берем его. Иначе берем стандартный atlas.
-                        let topCol = blockProps.atlasTop ? blockProps.atlasTop[0] : col;
-                        let topRow = blockProps.atlasTop ? blockProps.atlasTop[1] : row;
+        const mask2d = new Array(CHUNK_SIZE * CHUNK_SIZE);
+        const maskVertical = new Array(CHUNK_SIZE * CHUNK_HEIGHT);
 
-                        pushUV(topCol, topRow);
+        const cellsEqual = (a, b) => {
+            if (!a || !b) return false;
+            return a.id === b.id && a.col === b.col && a.row === b.row;
+        };
 
-                        const nN = isSolid(0, 1, -1);
-                        const nS = isSolid(0, 1, 1);
-                        const nE = isSolid(1, 1, 0);
-                        const nW = isSolid(-1, 1, 0);
-                        const nNE = isSolid(1, 1, -1);
-                        const nNW = isSolid(-1, 1, -1);
-                        const nSE = isSolid(1, 1, 1);
-                        const nSW = isSolid(-1, 1, 1);
-                        pushColor(calculateAO(nW, nS, nSW), calculateAO(nE, nS, nSE), calculateAO(nE, nN, nNE), calculateAO(nW, nN, nNW));
-
-                        indices.push(indexOffset, indexOffset + 1, indexOffset + 2, indexOffset, indexOffset + 2, indexOffset + 3);
-                        indexOffset += 4;
+        const greedyMerge = (mask, width, height, emit) => {
+            for (let j = 0; j < height; j++) {
+                for (let i = 0; i < width;) {
+                    const cell = mask[i + j * width];
+                    if (!cell) {
+                        i++;
+                        continue;
                     }
 
-                    // --- BOTTOM FACE (-Y) ---
-                    if (this.isTransparent(x, y - 1, z)) {
-                        positions.push(x, y, z,  x + 1, y, z,  x + 1, y, z + 1,  x, y, z + 1);
-                        normals.push(0, -1, 0,  0, -1, 0,  0, -1, 0,  0, -1, 0);
+                    let w = 1;
+                    while (i + w < width && cellsEqual(cell, mask[i + w + j * width])) w++;
 
-                        // ЛОГИКА ТЕКСТУР:
-                        let botCol = blockProps.atlasBottom ? blockProps.atlasBottom[0] : col;
-                        let botRow = blockProps.atlasBottom ? blockProps.atlasBottom[1] : row;
-
-                        pushUV(botCol, botRow);
-
-                        pushColor(0.7, 0.7, 0.7, 0.7);
-                        indices.push(indexOffset, indexOffset + 1, indexOffset + 2, indexOffset, indexOffset + 2, indexOffset + 3);
-                        indexOffset += 4;
+                    let h = 1;
+                    outer: for (; j + h < height; h++) {
+                        for (let k = 0; k < w; k++) {
+                            if (!cellsEqual(cell, mask[i + k + (j + h) * width])) break outer;
+                        }
                     }
 
-                    // --- RIGHT (+X) ---
-                    if (this.isTransparent(x + 1, y, z)) {
-                        positions.push(x + 1, y, z + 1,  x + 1, y, z,  x + 1, y + 1, z,  x + 1, y + 1, z + 1);
-                        normals.push(1, 0, 0,  1, 0, 0,  1, 0, 0,  1, 0, 0);
-                        pushUV(col, row); // Используем стандартные (боковые)
+                    emit(cell, i, j, w, h);
 
-                        const nD=isSolid(1,-1,0), nU=isSolid(1,1,0), nF=isSolid(1,0,1), nB=isSolid(1,0,-1);
-                        const nDF=isSolid(1,-1,1), nDB=isSolid(1,-1,-1), nUF=isSolid(1,1,1), nUB=isSolid(1,1,-1);
-                        pushColor(calculateAO(nF,nD,nDF), calculateAO(nB,nD,nDB), calculateAO(nB,nU,nUB), calculateAO(nF,nU,nUF));
-
-                        indices.push(indexOffset, indexOffset + 1, indexOffset + 2, indexOffset, indexOffset + 2, indexOffset + 3);
-                        indexOffset += 4;
+                    for (let y = 0; y < h; y++) {
+                        for (let x = 0; x < w; x++) {
+                            mask[i + x + (j + y) * width] = null;
+                        }
                     }
 
-                    // --- LEFT (-X) ---
-                    if (this.isTransparent(x - 1, y, z)) {
-                        positions.push(x, y, z,  x, y, z + 1,  x, y + 1, z + 1,  x, y + 1, z);
-                        normals.push(-1, 0, 0,  -1, 0, 0,  -1, 0, 0,  -1, 0, 0);
-                        pushUV(col, row);
-
-                        const nD=isSolid(-1,-1,0), nU=isSolid(-1,1,0), nF=isSolid(-1,0,1), nB=isSolid(-1,0,-1);
-                        const nDF=isSolid(-1,-1,1), nDB=isSolid(-1,-1,-1), nUF=isSolid(-1,1,1), nUB=isSolid(-1,1,-1);
-                        pushColor(calculateAO(nB,nD,nDB), calculateAO(nF,nD,nDF), calculateAO(nF,nU,nUF), calculateAO(nB,nU,nUB));
-
-                        indices.push(indexOffset, indexOffset + 1, indexOffset + 2, indexOffset, indexOffset + 2, indexOffset + 3);
-                        indexOffset += 4;
-                    }
-
-                    // --- FRONT (+Z) ---
-                    if (this.isTransparent(x, y, z + 1)) {
-                        positions.push(x, y, z + 1,  x + 1, y, z + 1,  x + 1, y + 1, z + 1,  x, y + 1, z + 1);
-                        normals.push(0, 0, 1,  0, 0, 1,  0, 0, 1,  0, 0, 1);
-                        pushUV(col, row);
-
-                        const nD=isSolid(0,-1,1), nU=isSolid(0,1,1), nL=isSolid(-1,0,1), nR=isSolid(1,0,1);
-                        const nDL=isSolid(-1,-1,1), nDR=isSolid(1,-1,1), nUL=isSolid(-1,1,1), nUR=isSolid(1,1,1);
-                        pushColor(calculateAO(nL,nD,nDL), calculateAO(nR,nD,nDR), calculateAO(nR,nU,nUR), calculateAO(nL,nU,nUL));
-
-                        indices.push(indexOffset, indexOffset + 1, indexOffset + 2, indexOffset, indexOffset + 2, indexOffset + 3);
-                        indexOffset += 4;
-                    }
-
-                    // --- BACK (-Z) ---
-                    if (this.isTransparent(x, y, z - 1)) {
-                        positions.push(x + 1, y, z,  x, y, z,  x, y + 1, z,  x + 1, y + 1, z);
-                        normals.push(0, 0, -1,  0, 0, -1,  0, 0, -1,  0, 0, -1);
-                        pushUV(col, row);
-
-                        const nD=isSolid(0,-1,-1), nU=isSolid(0,1,-1), nL=isSolid(-1,0,-1), nR=isSolid(1,0,-1);
-                        const nDL=isSolid(-1,-1,-1), nDR=isSolid(1,-1,-1), nUL=isSolid(-1,1,-1), nUR=isSolid(1,1,-1);
-                        pushColor(calculateAO(nR,nD,nDR), calculateAO(nL,nD,nDL), calculateAO(nL,nU,nUL), calculateAO(nR,nU,nUR));
-
-                        indices.push(indexOffset, indexOffset + 1, indexOffset + 2, indexOffset, indexOffset + 2, indexOffset + 3);
-                        indexOffset += 4;
-                    }
+                    i += w;
                 }
             }
+        };
+
+        const fillMaskTop = (mask, y) => {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    const idx = z * CHUNK_SIZE + x;
+                    const currentId = this._getBlockIdWithNeighbors(x, y, z);
+                    const neighborId = this._getBlockIdWithNeighbors(x, y + 1, z);
+                    if (!this._shouldRenderFace(currentId, neighborId)) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    const props = BLOCKS[currentId];
+                    const tile = this._getFaceTile(props, 'top');
+                    if (!tile) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    mask[idx] = { id: currentId, col: tile[0], row: tile[1] };
+                }
+            }
+        };
+
+        const fillMaskBottom = (mask, y) => {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    const idx = z * CHUNK_SIZE + x;
+                    const currentId = this._getBlockIdWithNeighbors(x, y, z);
+                    const neighborId = this._getBlockIdWithNeighbors(x, y - 1, z);
+                    if (!this._shouldRenderFace(currentId, neighborId)) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    const props = BLOCKS[currentId];
+                    const tile = this._getFaceTile(props, 'bottom');
+                    if (!tile) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    mask[idx] = { id: currentId, col: tile[0], row: tile[1] };
+                }
+            }
+        };
+
+        const fillMaskPositiveX = (mask, xPlane) => {
+            for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                for (let z = 0; z < CHUNK_SIZE; z++) {
+                    const idx = y * CHUNK_SIZE + z;
+                    const currentId = this._getBlockIdWithNeighbors(xPlane, y, z);
+                    const neighborId = this._getBlockIdWithNeighbors(xPlane + 1, y, z);
+                    if (!this._shouldRenderFace(currentId, neighborId)) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    const props = BLOCKS[currentId];
+                    const tile = this._getFaceTile(props, 'side');
+                    if (!tile) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    mask[idx] = { id: currentId, col: tile[0], row: tile[1] };
+                }
+            }
+        };
+
+        const fillMaskNegativeX = (mask, xPlane) => {
+            for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                for (let z = 0; z < CHUNK_SIZE; z++) {
+                    const idx = y * CHUNK_SIZE + z;
+                    const currentId = this._getBlockIdWithNeighbors(xPlane, y, z);
+                    const neighborId = this._getBlockIdWithNeighbors(xPlane - 1, y, z);
+                    if (!this._shouldRenderFace(currentId, neighborId)) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    const props = BLOCKS[currentId];
+                    const tile = this._getFaceTile(props, 'side');
+                    if (!tile) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    mask[idx] = { id: currentId, col: tile[0], row: tile[1] };
+                }
+            }
+        };
+
+        const fillMaskPositiveZ = (mask, zPlane) => {
+            for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    const idx = y * CHUNK_SIZE + x;
+                    const currentId = this._getBlockIdWithNeighbors(x, y, zPlane);
+                    const neighborId = this._getBlockIdWithNeighbors(x, y, zPlane + 1);
+                    if (!this._shouldRenderFace(currentId, neighborId)) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    const props = BLOCKS[currentId];
+                    const tile = this._getFaceTile(props, 'side');
+                    if (!tile) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    mask[idx] = { id: currentId, col: tile[0], row: tile[1] };
+                }
+            }
+        };
+
+        const fillMaskNegativeZ = (mask, zPlane) => {
+            for (let y = 0; y < CHUNK_HEIGHT; y++) {
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                    const idx = y * CHUNK_SIZE + x;
+                    const currentId = this._getBlockIdWithNeighbors(x, y, zPlane);
+                    const neighborId = this._getBlockIdWithNeighbors(x, y, zPlane - 1);
+                    if (!this._shouldRenderFace(currentId, neighborId)) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    const props = BLOCKS[currentId];
+                    const tile = this._getFaceTile(props, 'side');
+                    if (!tile) {
+                        mask[idx] = null;
+                        continue;
+                    }
+                    mask[idx] = { id: currentId, col: tile[0], row: tile[1] };
+                }
+            }
+        };
+
+        // --- TOP ---
+        for (let y = 0; y < CHUNK_HEIGHT; y++) {
+            fillMaskTop(mask2d, y);
+            greedyMerge(mask2d, CHUNK_SIZE, CHUNK_SIZE, (cell, startX, startZ, width, height) => {
+                const x0 = startX;
+                const x1 = startX + width;
+                const z0 = startZ;
+                const z1 = startZ + height;
+                const vy = y + 1;
+                appendQuad([
+                    [x0, vy, z1],
+                    [x1, vy, z1],
+                    [x1, vy, z0],
+                    [x0, vy, z0]
+                ], [0, 1, 0], [cell.col, cell.row], 1.0);
+            });
+        }
+
+        // --- BOTTOM ---
+        for (let y = 0; y < CHUNK_HEIGHT; y++) {
+            fillMaskBottom(mask2d, y);
+            greedyMerge(mask2d, CHUNK_SIZE, CHUNK_SIZE, (cell, startX, startZ, width, height) => {
+                const x0 = startX;
+                const x1 = startX + width;
+                const z0 = startZ;
+                const z1 = startZ + height;
+                const vy = y;
+                appendQuad([
+                    [x0, vy, z0],
+                    [x1, vy, z0],
+                    [x1, vy, z1],
+                    [x0, vy, z1]
+                ], [0, -1, 0], [cell.col, cell.row], 0.65);
+            });
+        }
+
+        // --- +X ---
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            fillMaskPositiveX(maskVertical, x);
+            greedyMerge(maskVertical, CHUNK_SIZE, CHUNK_HEIGHT, (cell, startZ, startY, width, height) => {
+                const z0 = startZ;
+                const z1 = startZ + width;
+                const y0 = startY;
+                const y1 = startY + height;
+                const vx = x + 1;
+                appendQuad([
+                    [vx, y0, z1],
+                    [vx, y0, z0],
+                    [vx, y1, z0],
+                    [vx, y1, z1]
+                ], [1, 0, 0], [cell.col, cell.row], 0.85);
+            });
+        }
+
+        // --- -X ---
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+            fillMaskNegativeX(maskVertical, x);
+            greedyMerge(maskVertical, CHUNK_SIZE, CHUNK_HEIGHT, (cell, startZ, startY, width, height) => {
+                const z0 = startZ;
+                const z1 = startZ + width;
+                const y0 = startY;
+                const y1 = startY + height;
+                const vx = x;
+                appendQuad([
+                    [vx, y0, z0],
+                    [vx, y0, z1],
+                    [vx, y1, z1],
+                    [vx, y1, z0]
+                ], [-1, 0, 0], [cell.col, cell.row], 0.8);
+            });
+        }
+
+        // --- +Z ---
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+            fillMaskPositiveZ(maskVertical, z);
+            greedyMerge(maskVertical, CHUNK_SIZE, CHUNK_HEIGHT, (cell, startX, startY, width, height) => {
+                const x0 = startX;
+                const x1 = startX + width;
+                const y0 = startY;
+                const y1 = startY + height;
+                const vz = z + 1;
+                appendQuad([
+                    [x0, y0, vz],
+                    [x1, y0, vz],
+                    [x1, y1, vz],
+                    [x0, y1, vz]
+                ], [0, 0, 1], [cell.col, cell.row], 0.9);
+            });
+        }
+
+        // --- -Z ---
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+            fillMaskNegativeZ(maskVertical, z);
+            greedyMerge(maskVertical, CHUNK_SIZE, CHUNK_HEIGHT, (cell, startX, startY, width, height) => {
+                const x0 = startX;
+                const x1 = startX + width;
+                const y0 = startY;
+                const y1 = startY + height;
+                const vz = z;
+                appendQuad([
+                    [x1, y0, vz],
+                    [x0, y0, vz],
+                    [x0, y1, vz],
+                    [x1, y1, vz]
+                ], [0, 0, -1], [cell.col, cell.row], 0.9);
+            });
         }
 
         if (positions.length === 0) return;
@@ -250,9 +443,12 @@ export class Chunk {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
         geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setAttribute('tileIndex', new THREE.Float32BufferAttribute(tileIndices, 2));
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
         geometry.setIndex(indices);
         geometry.computeBoundingSphere();
+
+        this._validateGeometry(geometry, positions.length / 3, tileIndices.length / 2);
 
         this.mesh = new THREE.Mesh(geometry, this.material);
         this.mesh.position.set(this.chunkX * CHUNK_SIZE, 0, this.chunkZ * CHUNK_SIZE);
@@ -260,9 +456,36 @@ export class Chunk {
         this.mesh.receiveShadow = true;
     }
 
-    isTransparent(x, y, z) {
-        if (x < 0 || x >= CHUNK_SIZE || y < 0 || y >= CHUNK_HEIGHT || z < 0 || z >= CHUNK_SIZE) return true;
-        const id = this.data[this._getIndex(x, y, z)];
-        return BLOCKS[id] ? BLOCKS[id].transparent : true;
+    _validateGeometry(geometry, vertexCount, tileCount) {
+        if (!geometry) return;
+        const key = `${this.chunkX}:${this.chunkZ}`;
+        const tileAttr = geometry.getAttribute('tileIndex');
+        const posAttr = geometry.getAttribute('position');
+
+        if (!tileAttr) {
+            if (!warnedTileMissing.has(key)) {
+                console.warn(`[Chunk ${key}] отсутствует атрибут tileIndex.`, geometry);
+                warnedTileMissing.add(key);
+            }
+            return;
+        }
+
+        if (!posAttr) return;
+
+        if (tileAttr.count !== posAttr.count && !warnedTileMismatch.has(key)) {
+            console.warn(
+                `[Chunk ${key}] tileIndex.count (${tileAttr.count}) != position.count (${posAttr.count}).`,
+                { tileAttr, posAttr }
+            );
+            warnedTileMismatch.add(key);
+        }
+
+        if (!loggedStats.has(key)) {
+            const firstTile = tileAttr.array.slice(0, 8);
+            console.info(
+                `[Chunk ${key}] vertices=${vertexCount}, tiles=${tileCount}, firstTile=${Array.from(firstTile)}`
+            );
+            loggedStats.add(key);
+        }
     }
 }

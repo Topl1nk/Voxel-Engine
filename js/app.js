@@ -54,7 +54,7 @@ class Application {
         this.debugAmbientEnabled = true;
         this.debugCloudLightingEnabled = true;
         this.debugViewIndex = 0;
-        this.debugViews = ['none', 'lighting', 'cameraNormals', 'worldNormals', 'depth', 'shadowMap', 'wireframe'];
+        this.debugViews = ['none', 'lighting', 'cameraNormals', 'worldNormals', 'depth', 'shadowMap', 'wireframe', 'tileIndex', 'localUV', 'atlasUV'];
         this.shadowDebugMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
         this.shadowDebugEnabled = false;
         const depthVertex = `
@@ -624,12 +624,19 @@ class Application {
         this.highlightPresetButton();
     }
 
+    setWorldDebugMode(mode = 0) {
+        if (this.world && typeof this.world.setDebugMode === 'function') {
+            this.world.setDebugMode(mode);
+        }
+    }
+
     applyDebugView() {
         const mode = this.debugViews[this.debugViewIndex] || 'none';
         const statusEl = document.getElementById('status-text');
         if (statusEl) {
             statusEl.textContent = `DEBUG: ${mode.toUpperCase()}`;
         }
+        this.setWorldDebugMode(0);
         switch (mode) {
             case 'lighting':
                 this.scene.overrideMaterial = this.debugMaterials.lighting;
@@ -651,6 +658,18 @@ class Application {
                 break;
             case 'wireframe':
                 this.scene.overrideMaterial = this.debugMaterials.wireframe;
+                break;
+            case 'tileIndex':
+                this.scene.overrideMaterial = null;
+                this.setWorldDebugMode(1);
+                break;
+            case 'localUV':
+                this.scene.overrideMaterial = null;
+                this.setWorldDebugMode(2);
+                break;
+            case 'atlasUV':
+                this.scene.overrideMaterial = null;
+                this.setWorldDebugMode(3);
                 break;
             default:
                 this.scene.overrideMaterial = null;

@@ -24,6 +24,8 @@ export class World {
             vertexColors: true,
             shadowSide: THREE.FrontSide
         });
+        this.debugMode = 0;
+        this.baseAlphaTest = this.material.alphaTest ?? 0.1;
         
         // Добавляем кастомные uniforms для теней от облаков
         this.material.onBeforeCompile = (shader) => {
@@ -32,28 +34,56 @@ export class World {
             shader.uniforms.uCloudHeight = { value: 200.0 };
             shader.uniforms.uCloudCoverage = { value: 0.80 }; // Инвертировано: 1.0 - 0.20
             shader.uniforms.uAOIntensity = { value: 0.45 };
+            shader.uniforms.uAtlasGrid = { value: WORLD_CONFIG.ATLAS_GRID };
+            shader.uniforms.uTilePadding = { value: 0.5 / WORLD_CONFIG.ATLAS_SIZE };
+            shader.uniforms.uDebugMode = { value: this.debugMode };
             
             // Сохраняем ссылку для обновления
             this.material.userData.shader = shader;
             this.material.userData.aoUniform = shader.uniforms.uAOIntensity;
+            this.material.userData.debugUniform = shader.uniforms.uDebugMode;
+            this.material.userData.baseAlphaTest = this.baseAlphaTest;
             
             // VERTEX SHADER: Добавляем varying для мировой позиции
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <common>',
                 `#include <common>
+                attribute vec2 tileIndex;
+                varying vec2 vTileIndex;
                 varying vec3 vWorldPosition;
+                varying vec3 vWorldNormal;
+                varying vec3 vLocalPosition;
+                uniform float uAtlasGrid;
+                uniform float uTilePadding;
+                uniform int uDebugMode;
+                `
+            );
+
+            shader.vertexShader = shader.vertexShader.replace(
+                '#include <uv_vertex>',
+                `#include <uv_vertex>
+                vTileIndex = tileIndex;
                 `
             );
             
             shader.vertexShader = shader.vertexShader.replace(
                 '#include <worldpos_vertex>',
                 `
+                vec3 localPosition = transformed;
                 vec4 worldPosition = vec4( transformed, 1.0 );
                 #ifdef USE_INSTANCING
                     worldPosition = instanceMatrix * worldPosition;
+                    localPosition = ( instanceMatrix * vec4( localPosition, 1.0 ) ).xyz;
                 #endif
                 worldPosition = modelMatrix * worldPosition;
                 vWorldPosition = worldPosition.xyz;
+                vLocalPosition = localPosition;
+                
+                vec3 worldNormal = normal;
+                #ifdef USE_INSTANCING
+                    worldNormal = mat3( instanceMatrix ) * worldNormal;
+                #endif
+                vWorldNormal = normalize( mat3( modelMatrix ) * worldNormal );
                 `
             );
             
@@ -62,11 +92,17 @@ export class World {
                 '#include <common>',
                 `#include <common>
                 
+                varying vec2 vTileIndex;
                 varying vec3 vWorldPosition;
+                varying vec3 vWorldNormal;
+                varying vec3 vLocalPosition;
                 uniform float uTime;
                 uniform float uCloudHeight;
                 uniform float uCloudCoverage;
                 uniform float uAOIntensity;
+                uniform float uAtlasGrid;
+                uniform float uTilePadding;
+                uniform int uDebugMode;
                 
                 float hash_simple(float n) {
                     return fract(sin(n) * 753.5453123);
@@ -96,6 +132,42 @@ export class World {
                 float getCloudShadow(vec3 worldPos) {
                     return 1.0;
                 }
+                
+                vec2 calcLocalUV(vec3 normal, vec3 pos) {
+                    vec3 n = normalize(normal);
+                    if (n.y > 0.5) {
+                        return vec2(fract(pos.x), fract(pos.z));
+                    }
+                    if (n.y < -0.5) {
+                        vec2 uv = vec2(fract(pos.x), fract(pos.z));
+                        uv.y = 1.0 - uv.y;
+                        return uv;
+                    }
+                    if (n.x > 0.5) {
+                        vec2 uv = vec2(1.0 - fract(pos.z), fract(pos.y));
+                        return uv;
+                    }
+                    if (n.x < -0.5) {
+                        return vec2(fract(pos.z), fract(pos.y));
+                    }
+                    if (n.z > 0.5) {
+                        return vec2(fract(pos.x), fract(pos.y));
+                    }
+                    vec2 uv = vec2(1.0 - fract(pos.x), fract(pos.y));
+                    return uv;
+                }
+                
+                vec2 calcAtlasUV(vec3 normal, vec3 localPos, vec2 tileIndex) {
+                    vec2 local = calcLocalUV(normal, localPos);
+                    float cell = 1.0 / uAtlasGrid;
+                    float uMin = tileIndex.x * cell + uTilePadding;
+                    float uMax = (tileIndex.x + 1.0) * cell - uTilePadding;
+                    float vMax = 1.0 - (tileIndex.y * cell) - uTilePadding;
+                    float vMin = 1.0 - ((tileIndex.y + 1.0) * cell) + uTilePadding;
+                    float u = mix(uMin, uMax, clamp(local.x, 0.0, 1.0));
+                    float v = mix(vMin, vMax, clamp(local.y, 0.0, 1.0));
+                    return vec2(u, v);
+                }
                 `
             );
 
@@ -105,6 +177,17 @@ export class World {
                 #ifdef USE_COLOR
                     float aoFactor = clamp((vColor.r + vColor.g + vColor.b) * 0.333, 0.0, 1.0);
                     diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * aoFactor, uAOIntensity);
+                #endif
+                `
+            );
+            
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <map_fragment>',
+                `
+                #ifdef USE_MAP
+                    vec2 atlasUV = calcAtlasUV(vWorldNormal, vLocalPosition, vTileIndex);
+                    vec4 texelColor = texture2D(map, atlasUV);
+                    diffuseColor *= texelColor;
                 #endif
                 `
             );
@@ -124,12 +207,42 @@ export class World {
                 `#include <lights_fragment_end>
                 
                 // Уменьшаем ambient свет для более контрастных теней
-                reflectedLight.indirectDiffuse *= 0.85;
+            reflectedLight.indirectDiffuse *= 0.85;
+            
+            if (uDebugMode > 0) {
+                vec3 debugColor = vec3(0.0);
+                if (uDebugMode == 1) {
+                    vec2 normIdx = vTileIndex / uAtlasGrid;
+                    debugColor = vec3(normIdx, 0.0);
+                } else if (uDebugMode == 2) {
+                    vec2 local = calcLocalUV(vWorldNormal, vLocalPosition);
+                    debugColor = vec3(local, 0.0);
+                } else if (uDebugMode == 3) {
+                    vec2 atlasUVDbg = calcAtlasUV(vWorldNormal, vLocalPosition, vTileIndex);
+                    debugColor = vec3(atlasUVDbg, 0.0);
+                }
+                gl_FragColor = vec4(debugColor, 1.0);
+                return;
+            }
                 `
             );
         };
 
         this.chunkCoordCache = new THREE.Vector2();
+    }
+
+    setDebugMode(mode = 0) {
+        this.debugMode = mode;
+        const uniform = this.material?.userData?.debugUniform;
+        if (uniform) {
+            uniform.value = mode;
+        }
+        const baseAlpha = this.material?.userData?.baseAlphaTest ?? this.baseAlphaTest ?? 0.0;
+        const targetAlpha = mode > 0 ? 0.0 : baseAlpha;
+        if (this.material && Math.abs(this.material.alphaTest - targetAlpha) > 1e-4) {
+            this.material.alphaTest = targetAlpha;
+            this.material.needsUpdate = true;
+        }
     }
 
     getChunkKey(cx, cz) {
@@ -155,6 +268,15 @@ export class World {
         const lx = x - cx * WORLD_CONFIG.CHUNK_SIZE;
         const lz = z - cz * WORLD_CONFIG.CHUNK_SIZE;
         return chunk.getBlock(lx, y, lz);
+    }
+
+    _refreshNeighborChunks(cx, cz) {
+        const offsets = [
+            [1, 0], [-1, 0], [0, 1], [0, -1]
+        ];
+        for (const [dx, dz] of offsets) {
+            this.regenerateChunk(cx + dx, cz + dz);
+        }
     }
 
     // Вспомогательный метод для регенерации конкретного чанка
@@ -266,6 +388,7 @@ export class World {
             if (chunk.mesh) {
                 this.scene.add(chunk.mesh);
             }
+            this._refreshNeighborChunks(info.cx, info.cz);
 
             loaded++;
             if (loaded >= this.chunkLoadSpeed) break;

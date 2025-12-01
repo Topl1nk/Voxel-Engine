@@ -1,6 +1,6 @@
 export const WORLD_CONFIG = {
     CHUNK_SIZE: 16,
-    CHUNK_HEIGHT: 128,
+    CHUNK_HEIGHT: 256,
     RENDER_DISTANCE: 6,
     TILE_SIZE: 64,
     ATLAS_SIZE: 1024,
